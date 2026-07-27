@@ -1,0 +1,52 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Node
+node_modules/
+dist/
+.npm
+.eslintcache
+
+# Environment & Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Backup / Debug files (never commit)
+*.orig
+*.orig2
+*.bak
+HANDOVER*.md
+*_fix_*.md
+*_iteration_*.md
+*_task_*.md
+*COMPLETE*.md
+*BASELINE*.md
+fixes/

@@ -1,0 +1,63 @@
+/* 全局样式 */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  &:hover { background: rgba(0, 0, 0, 0.35); }
+}
+
+/* Element Plus 覆盖 */
+.el-card {
+  border-radius: 10px;
+  .el-card__header {
+    padding: 14px 20px;
+    border-bottom: 1px solid #f0f0f0;
+    font-weight: 600;
+  }
+  .el-card__body {
+    padding: 16px 20px;
+  }
+}
+
+.el-table {
+  border-radius: 8px;
+  overflow: hidden;
+  .el-table__header th {
+    background: #fafafa !important;
+    color: #333;
+    font-weight: 600;
+  }
+}
+
+/* 分页 */
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* 页面通用 */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  h2 { margin: 0; font-size: 18px; color: #333; }
+}

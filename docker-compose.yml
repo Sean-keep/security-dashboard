@@ -1,0 +1,71 @@
+version: "3.8"
+
+networks:
+  sec-net:
+    driver: bridge
+
+volumes:
+  mysql-data:
+    driver: local
+
+services:
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: sec-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: SecPwd2024!
+      MYSQL_USER: secuser
+      MYSQL_PASSWORD: SecPwd2024!
+      MYSQL_DATABASE: security_dashboard
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - sec-net
+
+  # FastAPI 后端
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sec-backend
+    restart: unless-stopped
+    environment:
+      - SECRET_KEY=sec-sys-2024-safe-key-v2
+      - JWT_SECRET_KEY=jwt-sec-key-2024-v2
+      - MYSQL_HOST=host.docker.internal
+      - MYSQL_PORT=3306
+      - MYSQL_USER=secuser
+      - MYSQL_PASSWORD=SecPwd2024!
+      - MYSQL_DATABASE=security_dashboard
+      - ES_HOST=35.241.110.62
+      - ES_PORT=9200
+      - ES_SCHEME=https
+      - ES_USER=elastic
+      - ES_PASSWORD=+gQUm1G94_et=7PwnHj*
+      - ES_INDEX=online*nginx*
+      - ES_VERIFY_CERTS=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - mysql
+    networks:
+      - sec-net
+
+  # Vue3 前端
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sec-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - sec-net

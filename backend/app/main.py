@@ -1,0 +1,158 @@
+"""
+Security Dashboard Backend - FastAPI Application
+"""
+import os
+import fcntl
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+
+from app.core.config import settings
+from app.models.base import init_db
+from app.api import auth, addresses, rules, alerts, settings as settings_api
+from app.api.inspect import router as inspect_router
+from app.api.reports import router as reports_router
+from app.api.execution_logs import router as execution_logs_router
+from app.api.logs import router as logs_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan events"""
+    # Startup
+    print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} starting...")
+    print(f"📦 Database: {'SQLite' if settings.USE_SQLITE else 'MySQL'}")
+    print(f"🔍 ES: {settings.ES_HOST}:{settings.ES_PORT}")
+
+    # Initialize database
+    init_db()
+
+    # 一次性迁移：将历史登录日志（login_logs）同步到日志中心（operation_logs）
+    try:
+        from app.models.base import SessionLocal as _SL
+        from app.models.user import LoginLog as _LoginLog
+        from app.models.operation_log import OperationLog as _OperationLog
+        _mig_db = _SL()
+        try:
+            _has_login = _mig_db.query(_OperationLog).filter(
+                _OperationLog.log_type == "login"
+            ).first()
+            if not _has_login:
+                _old_logs = _mig_db.query(_LoginLog).order_by(_LoginLog.created_at.asc()).all()
+                for _ll in _old_logs:
+                    _mig_db.add(_OperationLog(
+                        log_type="login",
+                        username=_ll.username or "",
+                        action="登录",
+                        ip_address=_ll.ip_address,
+                        status="success" if _ll.status == "success" else "failure",
+                        detail=_ll.reason or "",
+                        created_at=_ll.created_at
+                    ))
+                _mig_db.commit()
+                if _old_logs:
+                    print(f"✅ 已迁移 {len(_old_logs)} 条历史登录日志到日志中心")
+        finally:
+            _mig_db.close()
+    except Exception as _e:
+        print(f"⚠️ 登录日志迁移失败: {_e}")
+
+    # 确保 Prometheus 相关配置 key 存在（默认值）
+    try:
+        from app.models.base import SessionLocal
+        from app.models.config import SystemConfig
+        _cfg_db = SessionLocal()
+        try:
+            _prom_defaults = [
+                ("prometheus_url", "http://localhost:9090", "Prometheus 地址", "Prometheus 服务地址", "prometheus"),
+                ("prometheus_user", "", "Prometheus 用户名", "Basic Auth 用户名（可选）", "prometheus"),
+                ("prometheus_password", "", "Prometheus 密码", "Basic Auth 密码（可选）", "prometheus"),
+            ]
+            for _key, _val, _label, _desc, _grp in _prom_defaults:
+                if not _cfg_db.query(SystemConfig).filter(SystemConfig.key == _key).first():
+                    _cfg_db.add(SystemConfig(
+                        key=_key, value=_val, label=_label,
+                        description=_desc, group_name=_grp
+                    ))
+            _cfg_db.commit()
+            print("✅ Prometheus 配置初始化完成")
+        finally:
+            _cfg_db.close()
+    except Exception as _e:
+        print(f"⚠️ 初始化 Prometheus 配置失败: {_e}")
+
+    # 启动规则调度器
+    # 所有 worker 均启动调度器（BackgroundScheduler 按 job ID 去重，不会重复执行）
+    try:
+        from app.services.scheduler_service import scheduler_service
+        scheduler_service.load_all_rules()
+        scheduler_service.start()
+    except Exception as _e:
+        print(f"⚠️ 调度器启动失败: {_e}")
+
+    yield
+
+    # Shutdown
+    try:
+        from app.services.scheduler_service import scheduler_service
+        scheduler_service.stop()
+    except Exception:
+        pass
+    print("👋 Shutting down...")
+
+
+# Create FastAPI app
+app = FastAPI(
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json"
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify actual origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(auth.router, prefix="/api")
+app.include_router(addresses.router, prefix="/api")
+app.include_router(rules.router, prefix="/api")
+app.include_router(alerts.router, prefix="/api")
+app.include_router(settings_api.router, prefix="/api")
+app.include_router(execution_logs_router, prefix="/api")
+app.include_router(logs_router, prefix="/api")
+app.include_router(reports_router)
+app.include_router(inspect_router)
+
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "name": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "status": "running"
+    }
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint"""
+    return {"status": "healthy"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=5000,
+        reload=settings.DEBUG
+    )
