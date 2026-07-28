@@ -1,6 +1,22 @@
 # Security Dashboard V2
 
-安全态势监控平台——FastAPI + Vue 3 + MySQL + Elasticsearch。
+安全监控平台——FastAPI + Vue 3 + MySQL + Elasticsearch。
+
+初衷：巡检可视化
+
+前置：日志范式化，目前使用的是logstash（nginx日志解析配置如下）
+
+grok {
+
+    match => [
+    
+       "message",'(?<log_time>\S+\s\S+).*\[PID:(?<PID>\S+)\]\s\[(?<id>\S+)\]\s\[(?<name>\S+)\]\s\S\s(?<level>\S+)(?<msg>.*)',
+       
+       "message",'(?<log_time>\S+\s\S+)\s(?<level>\S+)\s(?<msg>.*)'
+       
+          ]
+          
+    }
 
 ## 技术栈
 
@@ -107,3 +123,13 @@ security-dashboard-v2/
 - 攻击地址统计（Top 攻击次数）
 - 服务器监控指标（CPU / 内存 / 磁盘，需配置 Grafana + Prometheus 数据源）
 - 自定义脚本执行结果
+
+## 效果图
+
+<img width="1868" height="778" alt="image" src="https://github.com/user-attachments/assets/4bc84414-30f1-43b9-9fd9-b90e971558f7" />
+
+<img width="1884" height="614" alt="image" src="https://github.com/user-attachments/assets/a438dbd7-8fce-4077-b82a-7ecd1518c2da" />
+
+<img width="1865" height="634" alt="image" src="https://github.com/user-attachments/assets/3a757f86-3f6a-4fd0-a246-03f5140c72d3" />
+
+<img width="1873" height="634" alt="image" src="https://github.com/user-attachments/assets/7d99932a-4a47-4ea6-97bb-3d5baeafdef1" />
