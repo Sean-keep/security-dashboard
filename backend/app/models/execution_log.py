@@ -1,4 +1,4 @@
-﻿"""
+"""
 Rule Execution Log Model - 瑙勫垯鎵ц璁板綍
 """
 from datetime import datetime

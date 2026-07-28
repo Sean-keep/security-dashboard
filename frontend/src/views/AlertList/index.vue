@@ -197,18 +197,7 @@ const loadData = async () => {
       page: pagination.page,
       page_size: pagination.page_size
     })
-    // Filter out summary alerts and deduplicate by content
-    const seen = new Set()
-    tableData.value = (res.data.list || []).filter(row => {
-      const content = row.content || row.title || ''
-      // Skip summary alerts (created by scheduler, e.g. "规则「xxx」定时执行完成")
-      if (content.startsWith('规则「')) return false
-      // Deduplicate by rule_name + content
-      const key = (row.rule_name || '') + '|' + content
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+    tableData.value = res.data.list || []
     total.value = res.data.total
   } catch (e) {}
 }

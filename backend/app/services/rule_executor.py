@@ -1,4 +1,4 @@
-﻿import json
+import json
 from datetime import datetime
 from sqlalchemy import text as sa_text
 from app.models.address import Address
@@ -209,27 +209,51 @@ class RuleExecutor:
                 int(self._resolve_field(mapping.get("duration", "0"), record) or 0)
             )
 
+            # Resolve domain: use mapping hint first; if empty, try original ES field names directly.
+            # Note: reverse_output_mapping may rename server_name -> 攻击域名, so auto-detect
+            # mapping {"domain": "server_name"} won't find the key after transformation.
+            domain_val = self._resolve_field(mapping.get("domain", ""), record)
+            if not domain_val:
+                domain_val = record.get("server_name") or record.get("domain") or record.get("攻击域名") or ""
+            # attack_count: auto-detect may not find it either; try direct keys too
+            _cnt_raw = self._resolve_field(mapping.get("attack_count", ""), record)
+            if not _cnt_raw:
+                _cnt_raw = record.get("count") or record.get("doc_count") or record.get("攻击次数") or "1"
+            count_val = int(_cnt_raw)
+
             country = self._resolve_field(mapping.get("country", ""), record)
             if not country and ip:
-                # country 为空时通过 ipinfo.io 查询 IP 国家归属
                 try:
                     country = _lookup_country_single(ip)
                 except Exception:
                     country = ""
 
-            addr = Address(
-                ip_address=ip,
-                country=country,
-                domain=self._resolve_field(mapping.get("domain", ""), record),
-                source=self._resolve_field(mapping.get("source", ""), record) or "es_rule",
-                attack_count=int(self._resolve_field(mapping.get("attack_count", "1"), record) or 1),
-                start_time=_start_dt,
-                end_time=_end_dt,
-                duration=_dur_int,
-                severity=mapping.get("severity", "medium"),
-                status="active"
-            )
-            self.db_session.add(addr)
+            # Upsert: 存在则累加 attack_count + 更新时间，不存在则插入
+            existing = self.db_session.query(Address).filter(
+                Address.ip_address == ip,
+                (Address.domain == domain_val) | (Address.domain.is_(None) & (domain_val == None))
+            ).first()
+
+            if existing:
+                existing.attack_count = (existing.attack_count or 0) + count_val
+                existing.end_time = _end_dt
+                existing.duration = _dur_int
+                existing.severity = mapping.get("severity", existing.severity or "medium")
+                existing.updated_at = datetime.now()
+            else:
+                addr = Address(
+                    ip_address=ip,
+                    country=country,
+                    domain=domain_val,
+                    source=self._resolve_field(mapping.get("source", ""), record) or "es_rule",
+                    attack_count=count_val,
+                    start_time=_start_dt,
+                    end_time=_end_dt,
+                    duration=_dur_int,
+                    severity=mapping.get("severity", "medium"),
+                    status="active"
+                )
+                self.db_session.add(addr)
             written += 1
         self.db_session.commit()
         return written

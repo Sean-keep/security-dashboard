@@ -34,20 +34,21 @@ docker run -d \
     --name sec-backend \
     --network host \
     --restart unless-stopped \
-    -e SECRET_KEY=sec-sys-2024-safe-key-v2 \
-    -e JWT_SECRET_KEY=jwt-sec-key-2024-v2 \
-    -e MYSQL_HOST=127.0.0.1 \
-    -e MYSQL_PORT=3306 \
-    -e MYSQL_USER=secuser \
-    -e MYSQL_PASSWORD=SecPwd2024! \
-    -e MYSQL_DATABASE=security_dashboard \
-    -e ES_HOST=35.241.110.62 \
-    -e ES_PORT=9200 \
-    -e ES_SCHEME=https \
-    -e ES_USER=elastic \
-    -e ES_PASSWORD='+gQUm1G94_et=7PwnHj*' \
-    -e ES_INDEX='online*nginx*' \
+    -e SECRET_KEY="${SECRET_KEY:-your-secret-key}" \
+    -e JWT_SECRET_KEY="${JWT_SECRET_KEY:-your-jwt-secret}" \
+    -e MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}" \
+    -e MYSQL_PORT="${MYSQL_PORT:-3306}" \
+    -e MYSQL_USER="${MYSQL_USER:-your_mysql_user}" \
+    -e MYSQL_PASSWORD="${MYSQL_PASSWORD:-your_mysql_password}" \
+    -e MYSQL_DATABASE="${MYSQL_DATABASE:-security_dashboard}" \
+    -e ES_HOST="${ES_HOST:-your-es-host}" \
+    -e ES_PORT="${ES_PORT:-9200}" \
+    -e ES_SCHEME="${ES_SCHEME:-https}" \
+    -e ES_USER="${ES_USER:-elastic}" \
+    -e ES_PASSWORD="${ES_PASSWORD:-your_es_password}" \
+    -e ES_INDEX="${ES_INDEX:-online*nginx*}" \
     -e ES_VERIFY_CERTS=false \
+    -e TZ=Asia/Shanghai \
     security-dashboard-backend-v2:latest
 
 # Wait for backend to start
@@ -70,4 +71,4 @@ echo ""
 echo "=== Deployment Complete ==="
 echo "Backend: http://localhost:5000"
 echo "API Docs: http://localhost:5000/api/docs"
-echo "Login: admin / 123456"
+echo ""

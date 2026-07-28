@@ -9,6 +9,7 @@ from app.models.base import Base, TimestampMixin
 class Address(Base, TimestampMixin):
     """Attack address model"""
     __tablename__ = "addresses"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     ip_address = Column(String(64), nullable=False, index=True)

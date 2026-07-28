@@ -45,7 +45,7 @@
         </el-form-item>
       </el-form>
 
-      <div class="login-tip">默认账号：admin / 123456</div>
+      <div class="login-tip">首次登录后请修改默认密码</div>
     </el-card>
   </div>
 </template>
@@ -61,8 +61,8 @@ const loginFormRef = ref()
 const loading = ref(false)
 
 const loginForm = reactive({
-  username: 'admin',
-  password: '123456'
+  username: '',
+  password: ''
 })
 
 const loginRules = {

@@ -15,10 +15,10 @@ services:
     container_name: sec-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: SecPwd2024!
-      MYSQL_USER: secuser
-      MYSQL_PASSWORD: SecPwd2024!
-      MYSQL_DATABASE: security_dashboard
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-your_mysql_root_password}
+      MYSQL_USER: ${MYSQL_USER:-your_mysql_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-your_mysql_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-security_dashboard}
     volumes:
       - mysql-data:/var/lib/mysql
     ports:
@@ -35,20 +35,21 @@ services:
     container_name: sec-backend
     restart: unless-stopped
     environment:
-      - SECRET_KEY=sec-sys-2024-safe-key-v2
-      - JWT_SECRET_KEY=jwt-sec-key-2024-v2
-      - MYSQL_HOST=host.docker.internal
-      - MYSQL_PORT=3306
-      - MYSQL_USER=secuser
-      - MYSQL_PASSWORD=SecPwd2024!
-      - MYSQL_DATABASE=security_dashboard
-      - ES_HOST=35.241.110.62
-      - ES_PORT=9200
-      - ES_SCHEME=https
-      - ES_USER=elastic
-      - ES_PASSWORD=+gQUm1G94_et=7PwnHj*
-      - ES_INDEX=online*nginx*
-      - ES_VERIFY_CERTS=false
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-min-32-chars}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-jwt-secret-key}
+      - MYSQL_HOST=${MYSQL_HOST:-localhost}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_USER=${MYSQL_USER:-your_mysql_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-your_mysql_password}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-security_dashboard}
+      - ES_HOST=${ES_HOST:-your-es-host}
+      - ES_PORT=${ES_PORT:-9200}
+      - ES_SCHEME=${ES_SCHEME:-https}
+      - ES_USER=${ES_USER:-elastic}
+      - ES_PASSWORD=${ES_PASSWORD:-your_es_password}
+      - ES_INDEX=${ES_INDEX:-online*nginx*}
+      - ES_VERIFY_CERTS=${ES_VERIFY_CERTS:-false}
+      - TZ=Asia/Shanghai
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

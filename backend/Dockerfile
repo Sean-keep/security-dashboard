@@ -19,8 +19,11 @@ COPY . .
 # Create data directory for SQLite
 RUN mkdir -p /app/data
 
+# Copy and set permissions for start script
+RUN chmod +x /app/start.sh
+
 # Expose port
 EXPOSE 5000
 
-# Run with Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
+# Run with start script (web + scheduler)
+CMD ["/app/start.sh"]

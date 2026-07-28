@@ -2,7 +2,6 @@
 Security Dashboard Backend - FastAPI Application
 """
 import os
-import fcntl
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -81,23 +80,12 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         print(f"⚠️ 初始化 Prometheus 配置失败: {_e}")
 
-    # 启动规则调度器
-    # 所有 worker 均启动调度器（BackgroundScheduler 按 job ID 去重，不会重复执行）
-    try:
-        from app.services.scheduler_service import scheduler_service
-        scheduler_service.load_all_rules()
-        scheduler_service.start()
-    except Exception as _e:
-        print(f"⚠️ 调度器启动失败: {_e}")
+    # 调度器由独立进程运行（run_scheduler.py），不在 web worker 中启动
+    print("ℹ️ 调度器由独立进程运行")
 
     yield
 
     # Shutdown
-    try:
-        from app.services.scheduler_service import scheduler_service
-        scheduler_service.stop()
-    except Exception:
-        pass
     print("👋 Shutting down...")
 
 
@@ -146,6 +134,22 @@ async def root():
 async def health():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+@app.get("/api/scheduler/status")
+async def scheduler_status():
+    """调度器状态检查（如果停止则自动重启）"""
+    try:
+        from app.services.scheduler_service import scheduler_service
+        
+        # 调度器由独立进程运行，这里只查询状态
+        jobs = scheduler_service.scheduler.get_jobs()
+        return {
+            "running": scheduler_service.scheduler.running,
+            "jobs": [{"id": j.id, "name": j.name, "next_run": str(j.next_run_time)} for j in jobs]
+        }
+    except Exception as e:
+        return {"error": str(e), "running": False, "jobs": []}
 
 
 if __name__ == "__main__":

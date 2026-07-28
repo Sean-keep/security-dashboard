@@ -30,7 +30,7 @@ _engine_kwargs = {
 }
 if _db_url.startswith('mysql'):
     # PyMySQL 1.2+ no longer accepts serverTimezone in URL; use connect_args instead
-    _engine_kwargs['connect_args'] = {'init_command': "SET time_zone='+08:00'"}
+    _engine_kwargs['connect_args'] = {'init_command': "SET time_zone='+08:00', NAMES utf8mb4", 'charset': 'utf8mb4'}
 
 # Create engine
 engine = create_engine(

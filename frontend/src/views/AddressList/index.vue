@@ -105,7 +105,7 @@
           </div>
         </el-form-item>
         <el-form-item label="攻击域名">
-          <el-input v-model="form.domain" placeholder="例：fissonpay.com" />
+          <el-input v-model="form.domain" placeholder="例：example.com" />
         </el-form-item>
         <el-form-item label="首次攻击时间">
           <el-date-picker v-model="form.start_time" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" style="width:100%" />

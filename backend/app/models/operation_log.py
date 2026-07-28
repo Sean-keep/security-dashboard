@@ -1,4 +1,4 @@
-﻿"""
+"""
 Operation Log Model - 鏃ュ織涓績锛堢櫥褰曟棩蹇?+ 鎿嶄綔鏃ュ織锛?"""
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime

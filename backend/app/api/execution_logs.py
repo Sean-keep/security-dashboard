@@ -74,7 +74,7 @@ async def list_execution_logs(
                    detail, status, error_message
             FROM rule_execution_logs
             WHERE {where_clause}
-            ORDER BY executed_at DESC, id DESC
+            ORDER BY id DESC
             LIMIT :limit OFFSET :offset
         """),
         {**params, "limit": page_size, "offset": offset}

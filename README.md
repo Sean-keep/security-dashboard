@@ -19,18 +19,34 @@
 - **安全巡检** — 定时任务、脚本执行、巡检报告生成导出
 - **系统设置** — ES/MySQL/Grafana 连接配置、用户管理、操作日志
 
+## ⚡ 云端预览 (GitHub Codespaces)
+
+无需本地安装任何依赖，直接在 GitHub 上启动完整开发环境：
+
+1. 点击本仓库页面右上角 **Code** → **Codespaces** → **Create codespace on main**
+2. 等待环境自动初始化（约 3-5 分钟）
+3. 在 `backend/` 目录创建 `.env` 文件（参考 `.env.example`）
+4. 启动后端：`cd backend && uvicorn app.main:app --host 0.0.0.0 --port 5000`
+5. 启动前端（dev 模式）：`cd frontend && npm run dev`
+6. 点击弹出的端口预览链接即可访问
+
+> ⚠️ Codespaces 默认无 MySQL/ES，需要在 `backend/.env` 中配置外部数据源。
+
 ## 快速启动
 
 ```bash
-# 1. 启动容器栈
+# 1. 配置环境变量
+cp backend/.env.example backend/.env
+# 编辑 backend/.env，填入真实配置
+
+# 2. 启动容器栈
 docker-compose -f docker-compose.yml up -d
 
-# 2. 进入后端容器初始化数据库
+# 3. 进入后端容器初始化数据库
 docker exec sec-backend python scripts/create_scripts_table.py
 
-# 3. 访问前端
+# 4. 访问前端
 open http://localhost
-# 登录账号: admin / 123456
 ```
 
 ## 项目结构
@@ -44,7 +60,8 @@ security-dashboard-v2/
 │   │   ├── schemas/      # Pydantic schema
 │   │   └── services/     # 核心服务（ES 查询、规则执行、调度器、巡检）
 │   ├── scripts/          # 初始化脚本
-│   └── Dockerfile
+│   ├── Dockerfile
+│   └── .env.example      # 环境变量模板
 ├── frontend/             # Vue 3 前端
 │   ├── src/
 │   │   ├── views/        # 页面组件
@@ -58,19 +75,28 @@ security-dashboard-v2/
 
 ## 数据源配置
 
-系统默认连接外部 Elasticsearch 数据源（需在「系统设置」中配置）：
+系统默认连接外部 Elasticsearch 数据源（需在「系统设置」中配置，或通过环境变量传入）：
 
-- Host: `35.241.110.62:9200`
-- Index Pattern: `online*nginx*`
-- 认证: Basic Auth (elastic)
+- Host: `ES_HOST`
+- Index Pattern: `ES_INDEX`（默认 `online*nginx*`）
+- 认证: Basic Auth（`ES_USER` / `ES_PASSWORD`）
+
+## 初始账号
+
+默认管理员账号（首次启动后请立即修改密码）：
+
+| 字段 | 值 |
+|------|-----|
+| 账号 | admin |
+| 密码 | （首次登录后强制修改）|
 
 ## 告警规则说明
 
-规则支持多阶段聚合，示例 Rule 13「高频攻击 IP 检测」：
+规则支持多阶段聚合，支持：
 
-- **Stage 1**: 5 分钟内同一 IP 404 请求 ≥ 50 次
-- **Stage 2**: 获取攻击目标域名
-- **Stage 3**: 聚合总请求数
+- **Stage 1**: 时间窗口内聚合（如 5 分钟内同一 IP 404 请求 ≥ 50 次）
+- **Stage 2**: 跨索引关联分析（获取攻击目标域名）
+- **Stage 3**: 二次聚合统计
 
 规则触发后自动写入告警，通过模板渲染 `{攻击地址}`、`{攻击域名}` 等占位符。
 
@@ -79,5 +105,5 @@ security-dashboard-v2/
 支持按日期生成 Word / TXT 格式巡检报告，包含：
 
 - 攻击地址统计（Top 攻击次数）
-- 服务器监控指标（CPU / 内存 / 磁盘）
+- 服务器监控指标（CPU / 内存 / 磁盘，需配置 Grafana + Prometheus 数据源）
 - 自定义脚本执行结果
