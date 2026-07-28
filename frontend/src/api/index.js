@@ -100,8 +100,8 @@ export const reports = {
 // 宸℃鎶ュ憡绠＄悊
 export const reportMgmt = {
   list: (params) => request.get('/reports', { params }),
-  get: (id) => request.get(/reports/),
-  delete: (id) => request.delete(/reports/),
+  get: (id) => request.get(`/reports/${id}`),
+  delete: (id) => request.delete(`/reports/${id}`),
   generate: (params) => request.get('/reports/inspection', { params }),
 }
 

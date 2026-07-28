@@ -149,16 +149,16 @@
 
           <el-table :data="reportList" v-loading="refreshing" border stripe size="small">
             <el-table-column prop="id" label="ID" width="70" align="center" />
-            <el-table-column prop="report_date" label="报告日期" width="130" />
-            <el-table-column prop="generated_at" label="生成时间" width="170" />
-            <el-table-column prop="address_count" label="攻击地址" width="100" align="right" />
-            <el-table-column prop="script_count" label="脚本数" width="90" align="right" />
-            <el-table-column prop="created_by" label="生成人" width="100" />
-            <el-table-column label="操作" width="220" fixed="right">
+            <el-table-column prop="report_date" label="报告日期" width="140" />
+            <el-table-column prop="generated_at" label="生成时间" width="180" />
+            <el-table-column prop="address_count" label="攻击地址" width="110" align="right" />
+            <el-table-column prop="script_count" label="脚本数" width="100" align="right" />
+            <el-table-column prop="created_by" label="生成人" width="120" />
+            <el-table-column label="操作">
               <template #default="{ row }">
                 <el-button size="small" type="primary" plain @click="previewReport(row)">预览</el-button>
-                <el-button size="small" @click="exportReport(row, 'word')">导出 Word</el-button>
-                <el-button size="small" @click="exportReport(row, 'txt')">导出 TXT</el-button>
+                <el-button size="small" @click="exportReport(row, 'word')">Word</el-button>
+                <el-button size="small" @click="exportReport(row, 'txt')">TXT</el-button>
                 <el-button size="small" type="danger" plain @click="removeReport(row)">删除</el-button>
               </template>
             </el-table-column>
