@@ -122,3 +122,15 @@ export const getDashboardStats = () => Promise.all([
   ruleCount: ruleRes.data.total,
   alertStats: alertRes.data
 }))
+
+// ── 远程孤岛执行 ──
+export const remoteApi = {
+  listHosts: () => request.get('/remote/hosts'),
+  createHost: (alias) => request.post('/remote/hosts', { alias }),
+  updateHost: (id, alias) => request.put(`/remote/hosts/${id}`, { alias }),
+  deleteHost: (id) => request.delete(`/remote/hosts/${id}`),
+  resetToken: (id) => request.post(`/remote/hosts/${id}/reset-token`),
+  listExecutions: (params) => request.get('/remote/executions', { params }),
+  getExecution: (id) => request.get(`/remote/executions/${id}`),
+  generateCollector: (scriptId, hostId, callbackUrl, lang) => request.get(`/remote/scripts/${scriptId}/collector`, { params: { host_id: hostId, callback_url: callbackUrl, lang } }),
+}

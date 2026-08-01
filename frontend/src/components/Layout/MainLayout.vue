@@ -55,6 +55,10 @@
             <span class="sub-dot">·</span>
             <template #title>巡检报告</template>
           </el-menu-item>
+          <el-menu-item index="/remote">
+            <span class="sub-dot">·</span>
+            <template #title>远程执行</template>
+          </el-menu-item>
           <el-menu-item index="/inspection/metrics">
             <span class="sub-dot">·</span>
             <template #title>系统监控</template>
@@ -62,6 +66,10 @@
         </el-sub-menu>
 
         <!-- 折叠状态下的日常巡检 -->
+        <el-menu-item v-if="isCollapse" index="/remote">
+          <el-icon><Monitor /></el-icon>
+          <template #title>远程执行</template>
+        </el-menu-item>
         <el-menu-item v-if="isCollapse" index="/inspection/scripts">
           <el-icon><Monitor /></el-icon>
           <template #title>日常巡检</template>

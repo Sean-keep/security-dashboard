@@ -9,6 +9,7 @@ import SystemSettings from '@/views/SystemSettings/index.vue'
 import InspectionScripts from '@/views/InspectionScripts/index.vue'
 import InspectionReport from '@/views/InspectionReport/index.vue'
 import InspectionMetrics from '@/views/InspectionMetrics/index.vue'
+import Remote from '@/views/Remote/index.vue'
 
 const routes = [
   { path: '/login', name: 'Login', component: Login },
@@ -30,6 +31,7 @@ const routes = [
       { path: 'inspection/scripts', name: 'InspectionScripts', component: InspectionScripts },
       { path: 'inspection/report', name: 'InspectionReport', component: InspectionReport },
       { path: 'inspection/metrics', name: 'InspectionMetrics', component: InspectionMetrics },
+      { path: 'remote', name: 'Remote', component: Remote },
     ]
   }
 ]

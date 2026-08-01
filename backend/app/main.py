@@ -11,6 +11,7 @@ from app.models.base import init_db
 from app.api import auth, addresses, rules, alerts, settings as settings_api
 from app.api.inspect import router as inspect_router
 from app.api.reports import router as reports_router
+from app.api.remote import router as remote_router
 from app.api.execution_logs import router as execution_logs_router
 from app.api.logs import router as logs_router
 
@@ -118,6 +119,7 @@ app.include_router(execution_logs_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
 app.include_router(reports_router)
 app.include_router(inspect_router)
+app.include_router(remote_router)
 
 
 @app.get("/")
