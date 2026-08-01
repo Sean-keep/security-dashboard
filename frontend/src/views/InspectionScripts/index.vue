@@ -12,7 +12,7 @@
         </div>
       </template>
       <el-table :data="scripts" border stripe size="small">
-        <el-table-column prop="id" label="ID" width="60" />
+        <el-table-column type="index" label="序号" width="60" />
         <el-table-column prop="name" label="脚本名称" min-width="160" />
         <el-table-column prop="script_type" label="类型" width="90">
           <template #default="{ row }">

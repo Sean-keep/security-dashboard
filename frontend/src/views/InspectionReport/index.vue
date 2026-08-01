@@ -284,7 +284,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { reports, reportMgmt, remoteApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Monitor, Refresh } from '@element-plus/icons-vue'
@@ -300,6 +300,34 @@ const scriptOptions = ref([])
 const selectedScriptIds = ref([])
 const endpointOptions = ref([])
 const selectedEndpointIds = ref([])
+
+// ── 勾选状态持久化（默认恢复上次生成报告的勾选） ──
+const STORAGE_SCRIPTS = 'report_selected_scripts'
+const STORAGE_ENDPOINTS = 'report_selected_endpoints'
+
+function restoreSelection() {
+  try {
+    const savedScripts = JSON.parse(localStorage.getItem(STORAGE_SCRIPTS) || '[]')
+    if (Array.isArray(savedScripts) && scriptOptions.value.length) {
+      const validIds = new Set(scriptOptions.value.map(s => s.id))
+      selectedScriptIds.value = savedScripts.filter(id => validIds.has(id))
+    }
+  } catch (e) {}
+  try {
+    const savedEndpoints = JSON.parse(localStorage.getItem(STORAGE_ENDPOINTS) || '[]')
+    if (Array.isArray(savedEndpoints) && endpointOptions.value.length) {
+      const validIds = new Set(endpointOptions.value.map(ep => ep.id))
+      selectedEndpointIds.value = savedEndpoints.filter(id => validIds.has(id))
+    }
+  } catch (e) {}
+}
+
+watch(selectedScriptIds, (v) => {
+  localStorage.setItem(STORAGE_SCRIPTS, JSON.stringify(v))
+}, { deep: true })
+watch(selectedEndpointIds, (v) => {
+  localStorage.setItem(STORAGE_ENDPOINTS, JSON.stringify(v))
+}, { deep: true })
 
 function formatToday() {
   const d = new Date()
@@ -330,6 +358,8 @@ onMounted(async () => {
   } catch (e) {
     endpointOptions.value = []
   }
+  // 选项加载完成后，恢复上次勾选
+  restoreSelection()
 })
 
 const generateReport = async () => {

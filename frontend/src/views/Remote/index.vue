@@ -18,38 +18,11 @@
         v-loading="loading"
         :row-class-name="rowClass"
         @row-click="onRowClick"
+        @expand-change="onExpandChange"
         ref="tableRef"
+        row-key="id"
       >
-        <el-table-column width="48">
-          <template #default="{ row }">
-            <el-icon class="expand-icon" :class="{ expanded: expandedRow === row.id }">
-              <ArrowRight />
-            </el-icon>
-          </template>
-        </el-table-column>
-        <el-table-column prop="id" label="ID" width="60" />
-        <el-table-column prop="name" label="接口名称" min-width="160">
-          <template #default="{ row }">
-            <code class="name">{{ row.name }}</code>
-          </template>
-        </el-table-column>
-        <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="count" label="接收数" width="90" sortable />
-        <el-table-column prop="created_at" label="创建时间" width="170" />
-        <el-table-column label="接收地址" min-width="280">
-          <template #default="{ row }">
-            <code class="url">{{ baseUrl }}/api/remote/ingest/{{ row.name }}</code>
-            <el-button size="small" type="text" @click.stop="copy(baseUrl + '/api/remote/ingest/' + row.name)">复制</el-button>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="130" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" type="text" @click.stop="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="text" style="color:#f56c6c" @click.stop="removeEndpoint(row)">删除</el-button>
-          </template>
-        </el-table-column>
-
-        <!-- 展开行：显示该接口全部接收数据 -->
+        <!-- 原生展开列（隐藏自带箭头，用左侧自定义箭头指示） -->
         <el-table-column type="expand" width="1">
           <template #default="{ row }">
             <div class="expand-panel">
@@ -70,9 +43,9 @@
                   暂无接收数据
                 </div>
                 <div v-else class="log-list">
-                  <div v-for="item in expandData[row.id] || []" :key="item.id" class="log-item">
+                  <div v-for="(item, idx) in expandData[row.id] || []" :key="item.id" class="log-item">
                     <div class="log-head">
-                      <span>#{{ item.id }}</span>
+                      <span>#{{ idx + 1 }}</span>
                       <span>{{ item.received_at }}</span>
                       <el-button size="small" type="text" style="color:#f56c6c;margin-left:auto" @click="deleteLog(item, row)">
                         删除
@@ -94,6 +67,34 @@
                 />
               </div>
             </div>
+          </template>
+        </el-table-column>
+        <el-table-column width="48">
+          <template #default="{ row }">
+            <el-icon class="expand-icon" :class="{ expanded: expandedRow === row.id }">
+              <ArrowRight />
+            </el-icon>
+          </template>
+        </el-table-column>
+        <el-table-column type="index" label="序号" width="60" />
+        <el-table-column prop="name" label="接口名称" min-width="160">
+          <template #default="{ row }">
+            <code class="name">{{ row.name }}</code>
+          </template>
+        </el-table-column>
+        <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="count" label="接收数" width="90" sortable />
+        <el-table-column prop="created_at" label="创建时间" width="170" />
+        <el-table-column label="接收地址" min-width="280">
+          <template #default="{ row }">
+            <code class="url">{{ baseUrl }}/api/remote/ingest/{{ row.name }}</code>
+            <el-button size="small" type="text" @click.stop="copy(baseUrl + '/api/remote/ingest/' + row.name)">复制</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="130" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="text" @click.stop="openEdit(row)">编辑</el-button>
+            <el-button size="small" type="text" style="color:#f56c6c" @click.stop="removeEndpoint(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -255,12 +256,27 @@ async function deleteLog(item, row) {
 }
 
 async function onRowClick(row) {
-  if (expandedRow.value === row.id) {
+  const expanded = expandedRow.value !== row.id
+  if (expanded) {
+    expandedRow.value = row.id
+    await loadLogsFor(row.id)
+    tableRef.value?.toggleRowExpansion(row, true)
+  } else {
     expandedRow.value = null
-    return
+    tableRef.value?.toggleRowExpansion(row, false)
   }
-  expandedRow.value = row.id
-  await loadLogsFor(row.id)
+}
+
+async function onExpandChange(row, expanded) {
+  // 同步状态：无论是点击行还是点击原生展开按钮触发
+  if (expanded) {
+    expandedRow.value = row.id
+    await loadLogsFor(row.id)
+  } else {
+    if (expandedRow.value === row.id) {
+      expandedRow.value = null
+    }
+  }
 }
 
 async function loadLogsFor(endpointId) {
@@ -321,8 +337,12 @@ onMounted(() => {
   align-items: center;
   transition: transform 0.2s;
   color: #c0c4cc;
+  cursor: pointer;
 }
 .expand-icon.expanded { transform: rotate(90deg); color: #409EFF; }
+
+/* 隐藏原生展开箭头（用自定义箭头代替） */
+:deep(.el-table__expand-icon) { display: none; }
 
 .expand-panel {
   padding: 12px 16px;
