@@ -19,6 +19,8 @@ from app.models.user import User
 from app.models.address import Address
 from app.models.script import Script
 from app.models.inspection_report import InspectionReport
+from app.models.ingest_endpoint import IngestEndpoint
+from app.models.ingest_log import IngestLog
 from app.api.security import get_current_user
 from app.api.inspect import _compute_server_metrics, _run_script
 from app.utils.timezone import format_dt, now_cst
@@ -39,6 +41,7 @@ class ReportGenResp(BaseModel):
 def inspection_report(
     date: str = Query(default="", description="报告日期 YYYY-MM-DD，默认今天（CST）"),
     script_ids: str = Query(default="", description="勾选执行的脚本ID，逗号分隔；为空则不执行任何脚本"),
+    endpoint_ids: str = Query(default="", description="勾选整合的接收接口ID，逗号分隔；仅整合每个接口最近一条接收数据"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -109,6 +112,24 @@ def inspection_report(
                     "stderr": "执行异常: %s" % str(e),
                 })
 
+    # Part 4: 接收端口（仅整合每个接口最近一条）
+    ingested = []
+    if endpoint_ids:
+        try:
+            eids = [int(x) for x in endpoint_ids.split(",") if x.strip()]
+        except ValueError:
+            eids = []
+        for eid in eids:
+            ep = db.query(IngestEndpoint).filter(IngestEndpoint.id == eid).first()
+            if not ep:
+                continue
+            log = db.query(IngestLog).filter(IngestLog.endpoint_id == eid).order_by(IngestLog.id.desc()).first()
+            ingested.append({
+                "endpoint_name": ep.name,
+                "received_at": log.received_at.strftime("%Y-%m-%d %H:%M:%S") if (log and log.received_at) else "",
+                "payload": log.payload if log else "",
+            })
+
     generated_at_str = format_dt(now)
     report_date_str = day_start.strftime("%Y-%m-%d")
 
@@ -119,6 +140,7 @@ def inspection_report(
         "monitoring_error": err,
         "addresses": addresses,
         "servers": servers,
+        "ingested": ingested,
         # scripts 预览仅含基本信息，不含 stdout
         "scripts_preview": [
             {
@@ -161,6 +183,7 @@ def inspection_report(
             "monitoring_connected": err is None,
             "monitoring_error": err,
             "scripts": scripts_out,
+            "ingested": ingested,
         }
     )
 
@@ -223,6 +246,7 @@ def get_report(
             "monitoring_error": content.get("monitoring_error"),
             "scripts_preview": content.get("scripts_preview", []),
             "scripts": scripts,
+            "ingested": content.get("ingested", []),
         }
     )
 

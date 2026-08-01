@@ -26,6 +26,13 @@
             </el-checkbox-group>
             <span class="sp-hint" v-if="!selectedScriptIds.length">未勾选则不执行脚本</span>
           </div>
+          <div class="script-pick" v-if="endpointOptions.length">
+            <span class="sp-label">勾选接收端口:</span>
+            <el-checkbox-group v-model="selectedEndpointIds" size="small">
+              <el-checkbox v-for="ep in endpointOptions" :key="ep.id" :label="ep.id" border>{{ ep.name }}</el-checkbox>
+            </el-checkbox-group>
+            <span class="sp-hint" v-if="!selectedEndpointIds.length">未勾选则不整合接收数据</span>
+          </div>
         </el-card>
 
         <el-empty v-if="!currentReport && !loading" description="请选择日期后点击「生成巡检报告」" />
@@ -129,6 +136,25 @@
                 </div>
                 <pre class="script-out" v-if="sc.stdout">{{ sc.stdout }}</pre>
                 <pre class="script-err" v-if="sc.stderr">{{ sc.stderr }}</pre>
+              </div>
+            </div>
+          </el-card>
+
+          <!-- 接收数据（最近一条） -->
+          <el-card shadow="never" v-if="(currentReport.ingested || []).length">
+            <template #header>
+              <div class="card-header">
+                <span class="card-title">接收数据（最近一条）</span>
+                <span class="card-sub">{{ currentReport.ingested.length }} 个端口</span>
+              </div>
+            </template>
+            <div class="script-list">
+              <div v-for="it in currentReport.ingested" :key="it.endpoint_name" class="script-block">
+                <div class="script-head">
+                  <span class="script-name">{{ it.endpoint_name }}</span>
+                  <span class="script-type">{{ it.received_at }}</span>
+                </div>
+                <pre class="script-out" v-if="it.payload">{{ it.payload }}</pre>
               </div>
             </div>
           </el-card>
@@ -238,6 +264,19 @@
             </div>
           </div>
         </template>
+
+        <template v-if="(previewData.ingested || []).length">
+          <el-divider content-position="left">接收数据（最近一条）</el-divider>
+          <div class="script-list">
+            <div v-for="it in previewData.ingested" :key="it.endpoint_name" class="script-block">
+              <div class="script-head">
+                <span class="script-name">{{ it.endpoint_name }}</span>
+                <span class="script-type">{{ it.received_at }}</span>
+              </div>
+              <pre class="script-out" v-if="it.payload">{{ it.payload }}</pre>
+            </div>
+          </div>
+        </template>
       </template>
     </el-dialog>
 
@@ -246,7 +285,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { reports, reportMgmt } from '@/api'
+import { reports, reportMgmt, remoteApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Monitor, Refresh } from '@element-plus/icons-vue'
 
@@ -259,6 +298,8 @@ const loading = ref(false)
 const currentReport = ref(null)
 const scriptOptions = ref([])
 const selectedScriptIds = ref([])
+const endpointOptions = ref([])
+const selectedEndpointIds = ref([])
 
 function formatToday() {
   const d = new Date()
@@ -283,6 +324,12 @@ onMounted(async () => {
   } catch (e) {
     scriptOptions.value = []
   }
+  try {
+    const er = await remoteApi.listEndpoints()
+    endpointOptions.value = er.data || []
+  } catch (e) {
+    endpointOptions.value = []
+  }
 })
 
 const generateReport = async () => {
@@ -290,6 +337,7 @@ const generateReport = async () => {
   try {
     const params = { date: selectedDate.value }
     if (selectedScriptIds.value.length) params.script_ids = selectedScriptIds.value.join(',')
+    if (selectedEndpointIds.value.length) params.endpoint_ids = selectedEndpointIds.value.join(',')
     const res = await reports.inspection(params)
     currentReport.value = res.data || null
     if (currentReport.value) ElMessage.success('报告已生成并保存')
@@ -387,6 +435,13 @@ const buildText = (data) => {
     if (sc.stdout) L.push('   ' + sc.stdout.replace(/\n/g, '\n   '))
     if (sc.stderr) L.push('   错误: ' + sc.stderr.replace(/\n/g, '\n   '))
   })
+  L.push('───────────────────────────────────────────────')
+  L.push('【接收数据（最近一条）】')
+  if (!(r.ingested || []).length) L.push('（未勾选接收端口）')
+  ;(r.ingested || []).forEach((it, i) => {
+    L.push(`${i + 1}. 端口: ${it.endpoint_name} ｜ 接收时间: ${it.received_at}`)
+    if (it.payload) L.push('   ' + it.payload.replace(/\n/g, '\n   '))
+  })
   L.push('═══════════════════════════════════════════════')
   return L.join('\n')
 }
@@ -424,6 +479,13 @@ const buildHtml = (data) => {
     L.push(`<p><b>${i + 1}. ${sc.name}</b> [${sc.script_type}] 退出码 ${sc.exit_code}<br/>`)
     if (sc.stdout) L.push(`<pre>${sc.stdout.replace(/</g, '&lt;')}</pre>`)
     if (sc.stderr) L.push(`<pre>错误: ${sc.stderr.replace(/</g, '&lt;')}</pre>`)
+    L.push('</p>')
+  })
+  L.push('<h3>接收数据（最近一条）</h3>')
+  if (!(r.ingested || []).length) L.push('<p>（未勾选接收端口）</p>')
+  ;(r.ingested || []).forEach((it, i) => {
+    L.push(`<p><b>${i + 1}. ${it.endpoint_name}</b> ｜ 接收时间: ${it.received_at}<br/>`)
+    if (it.payload) L.push(`<pre>${it.payload.replace(/</g, '&lt;')}</pre>`)
     L.push('</p>')
   })
   L.push('</body></html>')

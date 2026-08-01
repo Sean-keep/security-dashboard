@@ -119,7 +119,7 @@ app.include_router(execution_logs_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
 app.include_router(reports_router)
 app.include_router(inspect_router)
-app.include_router(remote_router)
+app.include_router(remote_router, prefix="/api")
 
 
 @app.get("/")

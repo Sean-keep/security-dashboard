@@ -123,14 +123,11 @@ export const getDashboardStats = () => Promise.all([
   alertStats: alertRes.data
 }))
 
-// ── 远程孤岛执行 ──
+// ── 远程接收接口（被动推送） ──
 export const remoteApi = {
-  listHosts: () => request.get('/remote/hosts'),
-  createHost: (alias) => request.post('/remote/hosts', { alias }),
-  updateHost: (id, alias) => request.put(`/remote/hosts/${id}`, { alias }),
-  deleteHost: (id) => request.delete(`/remote/hosts/${id}`),
-  resetToken: (id) => request.post(`/remote/hosts/${id}/reset-token`),
-  listExecutions: (params) => request.get('/remote/executions', { params }),
-  getExecution: (id) => request.get(`/remote/executions/${id}`),
-  generateCollector: (scriptId, hostId, callbackUrl, lang) => request.get(`/remote/scripts/${scriptId}/collector`, { params: { host_id: hostId, callback_url: callbackUrl, lang } }),
+  listEndpoints: () => request.get('/remote/endpoints'),
+  createEndpoint: (name, description) => request.post('/remote/endpoints', { name, description }),
+  updateEndpoint: (id, description) => request.put(`/remote/endpoints/${id}`, { description }),
+  deleteEndpoint: (id) => request.delete(`/remote/endpoints/${id}`),
+  listLogs: (id, params) => request.get(`/remote/endpoints/${id}/logs`, { params }),
 }
