@@ -33,6 +33,8 @@
         <div class="table-toolbar">
           <span>共 <strong>{{ total }}</strong> 条记录</span>
           <div>
+            <el-button size="small" plain @click="openBlockConfig">配置封堵参数</el-button>
+            <el-button size="small" type="danger" plain :disabled="!multipleSelection.length" @click="blockSelected">批量封禁</el-button>
             <el-button size="small" plain :disabled="!multipleSelection.length" @click="batchLookupCountry">批量查询国家</el-button>
 
             <el-button size="small" plain @click="exportCsv">导出CSV</el-button>
@@ -71,8 +73,9 @@
         </el-table-column>
         <el-table-column prop="attack_count" label="攻击次数" width="120" align="center" sortable="custom" />
         <el-table-column prop="created_at" label="入库时间" width="170" sortable="custom" />
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
+            <el-button type="danger" link size="small" @click="blockOne(row)">封禁</el-button>
             <el-button type="primary" link size="small" @click="openEdit(row)">编辑</el-button>
             <el-button type="danger" link size="small" @click="confirmDelete(row)">删除</el-button>
           </template>
@@ -145,6 +148,41 @@
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saveLoading" @click="submitForm">保存</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 配置封堵参数 -->
+    <el-dialog v-model="blockConfigVisible" title="配置封堵参数" width="560px">
+      <el-form label-width="90px">
+        <el-form-item label="封堵脚本">
+          <el-select v-model="blockConfig.scriptId" placeholder="选择用于封堵的脚本（来自脚本执行）" style="width:100%">
+            <el-option v-for="s in scriptOptions" :key="s.id" :label="`${s.name}（${s.script_type}）`" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="参数模板">
+          <el-input v-model="blockConfig.paramsTemplate" type="textarea" :rows="6"
+            placeholder="每行一个 KEY=VALUE，值中可用 {ip} 代表当前封禁 IP。&#10;例：&#10;BLOCK_IP={ip}&#10;BLOCK_REASON=high_freq_attack" />
+        </el-form-item>
+      </el-form>
+      <div class="block-tip">脚本内通过环境变量读取参数（如 os.environ.get('BLOCK_IP')）。封堵脚本需避开安全检查黑名单（os/subprocess 等），建议用 urllib 调用防火墙/封堵 API 实现。</div>
+      <template #footer>
+        <el-button @click="blockConfigVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveBlockConfig">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 封禁执行结果 -->
+    <el-dialog v-model="blockResultVisible" title="封禁执行结果" width="640px">
+      <div v-loading="blockRunning">
+        <div v-if="!blockResults.length && !blockRunning" class="empty-text">暂无结果</div>
+        <div v-for="r in blockResults" :key="r.ip" class="block-result-item">
+          <div class="block-result-head">
+            <span class="ip-text">{{ r.ip }}</span>
+            <el-tag :type="r.exit_code === 0 ? 'success' : 'danger'" size="small">{{ r.exit_code === 0 ? '成功' : '失败' }}</el-tag>
+          </div>
+          <pre v-if="r.stdout" class="block-result-out">{{ r.stdout }}</pre>
+          <pre v-if="r.stderr" class="block-result-err">{{ r.stderr }}</pre>
+        </div>
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -384,6 +422,97 @@ const batchLookupCountry = async () => {
 }
 
 
+// ── 封禁功能（调用脚本执行中的封堵脚本） ──
+const BLOCK_CONFIG_KEY = 'block_config'
+const blockConfigVisible = ref(false)
+const blockResultVisible = ref(false)
+const blockRunning = ref(false)
+const blockResults = ref([])
+const scriptOptions = ref([])
+const blockConfig = reactive({ scriptId: null, paramsTemplate: '' })
+
+const openBlockConfig = async () => {
+  try {
+    const res = await inspectApi.listScripts()
+    scriptOptions.value = (res.data || []).filter(s => s.is_active !== false)
+  } catch (e) { scriptOptions.value = [] }
+  try {
+    const saved = JSON.parse(localStorage.getItem(BLOCK_CONFIG_KEY) || '{}')
+    blockConfig.scriptId = saved.scriptId ?? null
+    blockConfig.paramsTemplate = saved.paramsTemplate || ''
+  } catch (e) {}
+  blockConfigVisible.value = true
+}
+
+const saveBlockConfig = () => {
+  if (!blockConfig.scriptId) { ElMessage.warning('请选择封堵脚本'); return }
+  localStorage.setItem(BLOCK_CONFIG_KEY, JSON.stringify({ ...blockConfig }))
+  ElMessage.success('封堵参数已保存')
+  blockConfigVisible.value = false
+}
+
+// 解析参数模板：每行 KEY=VALUE，值中 {ip} 替换为当前 IP
+const parseBlockTemplate = (tpl, ip) => {
+  const env = {}
+  String(tpl || '').split('\n').forEach(line => {
+    line = line.trim()
+    if (!line || line.startsWith('#')) return
+    const idx = line.indexOf('=')
+    if (idx <= 0) return
+    const key = line.slice(0, idx).trim()
+    const val = line.slice(idx + 1).trim().replace(/\{ip\}/g, ip)
+    if (key) env[key] = val
+  })
+  return env
+}
+
+const doBlock = async (rows) => {
+  let config
+  try { config = JSON.parse(localStorage.getItem(BLOCK_CONFIG_KEY) || '{}') } catch (e) { config = {} }
+  if (!config.scriptId) {
+    ElMessage.warning('请先点击「配置封堵参数」选择封堵脚本')
+    return
+  }
+  const ips = rows.map(r => r.ip_address)
+  await ElMessageBox.confirm(
+    `将对 ${ips.length} 个地址执行封堵脚本：\n${ips.join('\n')}`,
+    '确认封禁', { type: 'warning', confirmButtonText: '执行封禁', cancelButtonText: '取消' }
+  )
+  blockResults.value = []
+  blockResultVisible.value = true
+  blockRunning.value = true
+  try {
+    const targets = rows.map(r => ({
+      ip: r.ip_address,
+      env: parseBlockTemplate(config.paramsTemplate, r.ip_address)
+    }))
+    const res = await inspectApi.blockByScript(config.scriptId, targets)
+    const results = res.data?.results || []
+    blockResults.value = results
+    // 执行成功的地址更新状态为已封禁
+    const okIps = new Set(results.filter(r => r.exit_code === 0).map(r => r.ip))
+    if (okIps.size) {
+      await Promise.all(
+        rows.filter(r => okIps.has(r.ip_address)).map(r => addresses.update(r.id, { status: 'blocked' }))
+      )
+    }
+    ElMessage.success(`封禁执行完成：成功 ${okIps.size} / ${rows.length}`)
+    loadData()
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error('封禁执行失败：' + (e?.response?.data?.msg || e?.message || '未知错误'))
+  } finally {
+    blockRunning.value = false
+  }
+}
+
+const blockOne = (row) => { doBlock([row]).catch(() => {}) }
+const blockSelected = () => {
+  if (!multipleSelection.value.length) return
+  doBlock(multipleSelection.value).catch(() => {})
+}
+
+
 // ── 导出 CSV ──
 const exportCsv = async () => {
   try {
@@ -424,5 +553,10 @@ onMounted(loadData)
 .country-text { font-size: 13px; color: #606266; }
 .loading-text { font-size: 12px; color: #a0a0a0; }
 .empty-text { color: #bbb; }
+.block-tip { font-size: 12px; color: #909399; padding: 0 0 8px 90px; line-height: 1.6; }
+.block-result-item { margin-bottom: 10px; border: 1px solid #e4e7ed; border-radius: 4px; overflow: hidden; }
+.block-result-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #f5f7fa; }
+.block-result-out { margin: 0; padding: 8px 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto; }
+.block-result-err { margin: 0; padding: 8px 12px; font-size: 12px; color: #f56c6c; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto; }
 .pagination-wrap { display: flex; justify-content: flex-end; margin-top: 16px; }
 </style>

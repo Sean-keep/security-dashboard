@@ -70,7 +70,8 @@ export const inspectApi = {
   createScript: (data) => request.post('/inspect/scripts', data),
   updateScript: (id, data) => request.put(`/inspect/scripts/${id}`, data),
   deleteScript: (id) => request.delete(`/inspect/scripts/${id}`),
-  executeScripts: (ids) => request.post('/inspect/scripts/execute', { script_ids: ids }),
+  executeScripts: (ids, extraEnv) => request.post('/inspect/scripts/execute', { script_ids: ids, extra_env: extraEnv || {} }),
+  blockByScript: (scriptId, targets) => request.post('/inspect/block', { script_id: scriptId, targets }),
   executeAdhoc: (type, script) => request.post('/inspect/execute', { type, script }),
   // Traffic
   traffic: (params) => request.post('/inspect/traffic', params),

@@ -3,6 +3,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import re
 
+import os
+
 import time
 
 import subprocess
@@ -81,7 +83,7 @@ def _check_script_safety(code: str) -> Optional[str]:
 
     return None
 
-def _run_script(code: str, lang: str, timeout: int = 30) -> Dict[str, Any]:
+def _run_script(code: str, lang: str, timeout: int = 30, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
 
     """Execute script in sandbox. Returns {stdout, stderr, exit_code}."""
 
@@ -91,13 +93,19 @@ def _run_script(code: str, lang: str, timeout: int = 30) -> Dict[str, Any]:
 
         return {'stdout': '', 'stderr': err, 'exit_code': 1}
 
+    run_env = os.environ.copy()
+
+    if env:
+
+        run_env.update(env)
+
     if lang == 'python':
 
         result = subprocess.run(
 
             ['python3', '-c', code],
 
-            capture_output=True, timeout=timeout
+            capture_output=True, timeout=timeout, env=run_env
 
         )
 
@@ -107,7 +115,7 @@ def _run_script(code: str, lang: str, timeout: int = 30) -> Dict[str, Any]:
 
             ['bash', '-c', code],
 
-            capture_output=True, timeout=timeout
+            capture_output=True, timeout=timeout, env=run_env
 
         )
 
@@ -304,6 +312,18 @@ class AdhocExecRequest(BaseModel):
 
     script: str
 
+class BlockTarget(BaseModel):
+
+    ip: str
+
+    env: Optional[Dict[str, str]] = None
+
+class BlockExecRequest(BaseModel):
+
+    script_id: int
+
+    targets: List[BlockTarget]
+
 class TrafficQuery(BaseModel):
 
     index: Optional[str] = None
@@ -446,9 +466,33 @@ def execute_scripts(req: ScriptExecRequest, db: Session = Depends(get_db)):
 
         else:
 
-            r = _run_script(s.content, s.script_type)
+            r = _run_script(s.content, s.script_type, env=req.extra_env or None)
 
             results.append({'id': s.id, 'name': s.name, **r})
+
+    return Response(data={'results': results, 'total': len(results)})
+
+@router.post("/block", response_model=Response)
+
+def execute_block(req: BlockExecRequest, db: Session = Depends(get_db)):
+
+    script = db.query(Script).filter(
+
+        Script.id == req.script_id, Script.is_active == True
+
+    ).first()
+
+    if not script:
+
+        return Response(code=404, msg='封堵脚本不存在或已停用')
+
+    results = []
+
+    for t in req.targets:
+
+        r = _run_script(script.content, script.script_type, env=t.env or None)
+
+        results.append({'ip': t.ip, 'name': script.name, **r})
 
     return Response(data={'results': results, 'total': len(results)})
 
