@@ -10,7 +10,23 @@
         <span class="section-title">接收接口</span>
         <el-button type="primary" size="small" @click="showCreate = true">+ 新增接口</el-button>
       </div>
-      <el-table :data="endpoints" border stripe size="small" v-loading="loading">
+      <el-table
+        :data="endpoints"
+        border
+        stripe
+        size="small"
+        v-loading="loading"
+        :row-class-name="rowClass"
+        @row-click="onRowClick"
+        ref="tableRef"
+      >
+        <el-table-column width="48">
+          <template #default="{ row }">
+            <el-icon class="expand-icon" :class="{ expanded: expandedRow === row.id }">
+              <ArrowRight />
+            </el-icon>
+          </template>
+        </el-table-column>
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="name" label="接口名称" min-width="160">
           <template #default="{ row }">
@@ -23,13 +39,60 @@
         <el-table-column label="接收地址" min-width="280">
           <template #default="{ row }">
             <code class="url">{{ baseUrl }}/api/remote/ingest/{{ row.name }}</code>
-            <el-button size="small" type="text" @click="copy(baseUrl + '/api/remote/ingest/' + row.name)">复制</el-button>
+            <el-button size="small" type="text" @click.stop="copy(baseUrl + '/api/remote/ingest/' + row.name)">复制</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="text" @click="viewLogs(row)">查看数据</el-button>
-            <el-button size="small" type="text" style="color:#f56c6c" @click="remove(row)">删除</el-button>
+            <el-button size="small" type="text" style="color:#f56c6c" @click.stop="removeEndpoint(row)">删除</el-button>
+          </template>
+        </el-table-column>
+
+        <!-- 展开行：显示该接口全部接收数据 -->
+        <el-table-column type="expand" width="1">
+          <template #default="{ row }">
+            <div class="expand-panel">
+              <div class="expand-toolbar">
+                <span class="expand-title">接收数据（共 {{ row.count }} 条）</span>
+                <el-button
+                  v-if="row.count > 0"
+                  size="small"
+                  type="danger"
+                  plain
+                  @click="clearLogs(row)"
+                >清空全部</el-button>
+              </div>
+
+              <!-- 加载该接口数据 -->
+              <div v-loading="expandLoading[row.id]">
+                <div v-if="(expandData[row.id] || []).length === 0" class="expand-empty">
+                  暂无接收数据
+                </div>
+                <div v-else class="log-list">
+                  <div v-for="item in expandData[row.id] || []" :key="item.id" class="log-item">
+                    <div class="log-head">
+                      <span>#{{ item.id }}</span>
+                      <span>{{ item.received_at }}</span>
+                      <el-button size="small" type="text" style="color:#f56c6c;margin-left:auto" @click="deleteLog(item, row)">
+                        删除
+                      </el-button>
+                    </div>
+                    <pre class="log-payload">{{ pretty(item.payload) }}</pre>
+                  </div>
+                </div>
+
+                <!-- 分页 -->
+                <el-pagination
+                  v-if="expandTotal[row.id] > expandPageSize"
+                  class="expand-pager"
+                  layout="total, prev, pager, next"
+                  :total="expandTotal[row.id] || 0"
+                  :page-size="expandPageSize"
+                  :current-page="expandPage[row.id] || 1"
+                  @current-change="(p) => onExpandPage(row.id, p)"
+                />
+              </div>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -51,56 +114,30 @@
         <el-button type="primary" @click="create">确定</el-button>
       </template>
     </el-dialog>
-
-    <!-- 数据查看 -->
-    <el-dialog v-model="showLogs" :title="'接收数据 - ' + (current.name || '')" width="760px">
-      <div class="logs-meta">
-        <span>接口：<code>{{ current.name }}</code></span>
-        <span>共 {{ logTotal }} 条</span>
-        <el-button size="small" @click="loadLogs">刷新</el-button>
-      </div>
-      <div v-loading="logsLoading" class="logs-list">
-        <div v-for="item in logs" :key="item.id" class="log-item">
-          <div class="log-head">
-            <span>#{{ item.id }}</span>
-            <span>{{ item.received_at }}</span>
-          </div>
-          <pre class="log-payload">{{ pretty(item.payload) }}</pre>
-        </div>
-        <el-empty v-if="!logsLoading && logs.length === 0" description="该接口暂无接收数据" />
-      </div>
-      <el-pagination
-        v-if="logTotal > logPageSize"
-        class="pager"
-        layout="total, prev, pager, next"
-        :total="logTotal"
-        :page-size="logPageSize"
-        :current-page="logPage"
-        @current-change="onLogPage"
-      />
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { remoteApi } from '@/api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowRight } from '@element-plus/icons-vue'
 
 const endpoints = ref([])
 const loading = ref(false)
 const baseUrl = window.location.origin
+const tableRef = ref(null)
 
 const showCreate = ref(false)
 const form = reactive({ name: '', description: '' })
 
-const showLogs = ref(false)
-const current = ref({})
-const logs = ref([])
-const logsLoading = ref(false)
-const logPage = ref(1)
-const logPageSize = ref(20)
-const logTotal = ref(0)
+// 展开状态
+const expandedRow = ref(null)
+const expandData = reactive({})    // endpoint_id → log list
+const expandLoading = reactive({})  // endpoint_id → bool
+const expandPage = reactive({})     // endpoint_id → page number
+const expandTotal = reactive({})     // endpoint_id → total
+const expandPageSize = 20
 
 async function loadEndpoints() {
   loading.value = true
@@ -133,34 +170,72 @@ async function create() {
   }
 }
 
-async function remove(row) {
+async function removeEndpoint(row) {
+  await ElMessageBox.confirm(
+    `确定删除接口「${row.name}」及其全部 ${row.count} 条接收数据？`,
+    '确认删除',
+    { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+  )
   await remoteApi.deleteEndpoint(row.id)
   ElMessage.success('已删除')
+  if (expandedRow.value === row.id) expandedRow.value = null
   loadEndpoints()
 }
 
-async function viewLogs(row) {
-  current.value = row
-  logPage.value = 1
-  showLogs.value = true
-  await loadLogs()
+async function clearLogs(row) {
+  await ElMessageBox.confirm(
+    `确定清空接口「${row.name}」的全部 ${row.count} 条接收数据？`,
+    '确认清空',
+    { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' }
+  )
+  await remoteApi.clearLogs(row.id)
+  ElMessage.success('已清空')
+  if (expandedRow.value === row.id) {
+    delete expandData[row.id]
+    delete expandLoading[row.id]
+  }
+  loadEndpoints()
 }
 
-async function loadLogs() {
-  if (!current.value.id) return
-  logsLoading.value = true
+async function deleteLog(item, row) {
+  await ElMessageBox.confirm('确定删除该条接收数据？', '确认删除', {
+    type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消'
+  })
+  await remoteApi.deleteLog(item.id)
+  ElMessage.success('已删除')
+  // 刷新当前页
+  await loadLogsFor(row.id)
+  loadEndpoints()  // 更新 count
+}
+
+async function onRowClick(row) {
+  if (expandedRow.value === row.id) {
+    expandedRow.value = null
+    return
+  }
+  expandedRow.value = row.id
+  await loadLogsFor(row.id)
+}
+
+async function loadLogsFor(endpointId) {
+  expandLoading[endpointId] = true
   try {
-    const res = await remoteApi.listLogs(current.value.id, { page: logPage.value, page_size: logPageSize.value })
-    logs.value = res.data?.items || []
-    logTotal.value = res.data?.total || 0
+    const page = expandPage[endpointId] || 1
+    const res = await remoteApi.listLogs(endpointId, { page, page_size: expandPageSize })
+    expandData[endpointId] = res.data?.items || []
+    expandTotal[endpointId] = res.data?.total || 0
   } finally {
-    logsLoading.value = false
+    expandLoading[endpointId] = false
   }
 }
 
-function onLogPage(p) {
-  logPage.value = p
-  loadLogs()
+async function onExpandPage(endpointId, p) {
+  expandPage[endpointId] = p
+  await loadLogsFor(endpointId)
+}
+
+function rowClass({ row }) {
+  return expandedRow.value === row.id ? 'expanded-row' : ''
 }
 
 function pretty(payload) {
@@ -191,10 +266,54 @@ onMounted(() => {
 .section-title { font-weight: 600; font-size: 14px; color: #303133; }
 .name { font-family: monospace; font-size: 13px; color: #409EFF; }
 .url { font-family: monospace; font-size: 12px; word-break: break-all; color: #606266; }
-.logs-meta { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; font-size: 13px; color: #606266; }
-.logs-list { max-height: 460px; overflow: auto; }
-.log-item { margin-bottom: 12px; border: 1px solid #e4e7ed; border-radius: 4px; overflow: hidden; }
-.log-head { background: #f5f7fa; padding: 6px 12px; display: flex; gap: 16px; font-size: 12px; color: #909399; }
-.log-payload { margin: 0; padding: 12px; background: #1e1e1e; color: #d4d4d4; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; }
-.pager { margin-top: 12px; justify-content: flex-end; }
+
+:deep(.el-table .expanded-row td) { background: #f5f7fa !important; }
+:deep(.el-table td.el-table__cell) { cursor: pointer; }
+
+.expand-icon {
+  display: flex;
+  align-items: center;
+  transition: transform 0.2s;
+  color: #c0c4cc;
+}
+.expand-icon.expanded { transform: rotate(90deg); color: #409EFF; }
+
+.expand-panel {
+  padding: 12px 16px;
+  background: #fafafa;
+}
+
+.expand-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.expand-title { font-size: 13px; color: #606266; font-weight: 500; }
+
+.expand-empty { color: #909399; font-size: 13px; padding: 8px 0; text-align: center; }
+
+.log-list { display: flex; flex-direction: column; gap: 8px; }
+.log-item { border: 1px solid #e4e7ed; border-radius: 4px; overflow: hidden; }
+.log-head {
+  background: #f5f7fa;
+  padding: 5px 12px;
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #909399;
+  align-items: center;
+}
+.log-payload {
+  margin: 0;
+  padding: 10px 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 280px;
+  overflow: auto;
+}
+.expand-pager { margin-top: 10px; justify-content: flex-end; }
 </style>

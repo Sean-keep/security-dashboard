@@ -93,6 +93,28 @@ def delete_endpoint(endpoint_id: int, db: Session = Depends(get_db), user: User 
     return Response(code=0, msg='ok')
 
 
+@router.delete('/remote/endpoints/{endpoint_id}/logs', response_model=Response)
+def clear_logs(endpoint_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """清空指定接口的全部接收数据"""
+    ep = db.query(IngestEndpoint).filter(IngestEndpoint.id == endpoint_id).first()
+    if not ep:
+        return Response(code=1, msg='接口不存在')
+    db.query(IngestLog).filter(IngestLog.endpoint_id == endpoint_id).delete()
+    db.commit()
+    return Response(code=0, msg='ok', data={'deleted': endpoint_id})
+
+
+@router.delete('/remote/logs/{log_id}', response_model=Response)
+def delete_log(log_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """删除单条接收数据"""
+    log = db.query(IngestLog).filter(IngestLog.id == log_id).first()
+    if not log:
+        return Response(code=1, msg='数据不存在')
+    db.delete(log)
+    db.commit()
+    return Response(code=0, msg='ok')
+
+
 @router.post('/remote/ingest/{name}')
 async def ingest(name: str, request: Request, db: Session = Depends(get_db)):
     """源端推送入口：无需登录，POST 任意数据到 /api/remote/ingest/{name} 即自动存储"""

@@ -130,4 +130,6 @@ export const remoteApi = {
   updateEndpoint: (id, description) => request.put(`/remote/endpoints/${id}`, { description }),
   deleteEndpoint: (id) => request.delete(`/remote/endpoints/${id}`),
   listLogs: (id, params) => request.get(`/remote/endpoints/${id}/logs`, { params }),
+  clearLogs: (id) => request.delete(`/remote/endpoints/${id}/logs`),
+  deleteLog: (id) => request.delete(`/remote/logs/${id}`),
 }
