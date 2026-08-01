@@ -42,8 +42,9 @@
             <el-button size="small" type="text" @click.stop="copy(baseUrl + '/api/remote/ingest/' + row.name)">复制</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
+            <el-button size="small" type="text" @click.stop="openEdit(row)">编辑</el-button>
             <el-button size="small" type="text" style="color:#f56c6c" @click.stop="removeEndpoint(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -114,6 +115,22 @@
         <el-button type="primary" @click="create">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 编辑接口 -->
+    <el-dialog v-model="showEdit" title="编辑接收接口" width="460px">
+      <el-form label-width="80px">
+        <el-form-item label="接口名称">
+          <el-input v-model="editForm.name" placeholder="字母/数字/下划线/横线，1-64位" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="editForm.description" type="textarea" :rows="2" placeholder="可选" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEdit = false">取消</el-button>
+        <el-button type="primary" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -130,6 +147,9 @@ const tableRef = ref(null)
 
 const showCreate = ref(false)
 const form = reactive({ name: '', description: '' })
+
+const showEdit = ref(false)
+const editForm = reactive({ id: null, name: '', description: '' })
 
 // 展开状态
 const expandedRow = ref(null)
@@ -167,6 +187,32 @@ async function create() {
     loadEndpoints()
   } else {
     ElMessage.error(res.msg || '创建失败')
+  }
+}
+
+async function openEdit(row) {
+  editForm.id = row.id
+  editForm.name = row.name
+  editForm.description = row.description || ''
+  showEdit.value = true
+}
+
+async function saveEdit() {
+  if (!editForm.name.trim()) {
+    ElMessage.warning('接口名称不能为空')
+    return
+  }
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(editForm.name.trim())) {
+    ElMessage.warning('名称只能包含字母、数字、下划线和横线（1-64位）')
+    return
+  }
+  const res = await remoteApi.updateEndpoint(editForm.id, editForm.name.trim(), editForm.description.trim())
+  if (res.code === 0) {
+    ElMessage.success('已保存')
+    showEdit.value = false
+    loadEndpoints()
+  } else {
+    ElMessage.error(res.msg || '保存失败')
   }
 }
 
