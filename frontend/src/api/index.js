@@ -127,7 +127,7 @@ export const getDashboardStats = () => Promise.all([
 export const remoteApi = {
   listEndpoints: () => request.get('/remote/endpoints'),
   createEndpoint: (name, description) => request.post('/remote/endpoints', { name, description }),
-  updateEndpoint: (id, description) => request.put(`/remote/endpoints/${id}`, { description }),
+  updateEndpoint: (id, name, description) => request.put(`/remote/endpoints/${id}`, { name, description }),
   deleteEndpoint: (id) => request.delete(`/remote/endpoints/${id}`),
   listLogs: (id, params) => request.get(`/remote/endpoints/${id}/logs`, { params }),
   clearLogs: (id) => request.delete(`/remote/endpoints/${id}/logs`),

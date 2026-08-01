@@ -41,7 +41,14 @@ class EndpointCreate(BaseModel):
 
 
 class EndpointUpdate(BaseModel):
+    name: Optional[str] = None
     description: Optional[str] = None
+
+    @validator('name')
+    def _validate_name(cls, v):
+        if v is not None and not NAME_RE.match(v):
+            raise ValueError('接口名称只能包含字母、数字、下划线和横线，长度 1-64')
+        return v
 
 
 @router.post('/remote/endpoints', response_model=Response)
@@ -76,10 +83,14 @@ def update_endpoint(endpoint_id: int, body: EndpointUpdate, db: Session = Depend
     ep = db.query(IngestEndpoint).filter(IngestEndpoint.id == endpoint_id).first()
     if not ep:
         return Response(code=1, msg='接口不存在')
+    if body.name is not None and body.name != ep.name:
+        if db.query(IngestEndpoint).filter(IngestEndpoint.name == body.name, IngestEndpoint.id != endpoint_id).first():
+            return Response(code=1, msg='接口名称已存在')
+        ep.name = body.name
     if body.description is not None:
         ep.description = body.description
     db.commit()
-    return Response(code=0, msg='ok', data={'id': ep.id})
+    return Response(code=0, msg='ok', data={'id': ep.id, 'name': ep.name, 'description': ep.description})
 
 
 @router.delete('/remote/endpoints/{endpoint_id}', response_model=Response)
