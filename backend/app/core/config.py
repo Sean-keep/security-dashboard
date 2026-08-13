@@ -30,7 +30,13 @@ class Settings(BaseSettings):
     MYSQL_DATABASE: str = os.environ.get("MYSQL_DATABASE", "security_dashboard")
     
     # SQLite fallback (when USE_SQLITE=1 or no MySQL password)
-    USE_SQLITE: bool = os.environ.get("USE_SQLITE", "0") == "1" or not os.environ.get("MYSQL_PASSWORD")
+    # 必须在实例化后基于已解析的 MYSQL_PASSWORD 判断，
+    # 不能在类定义时用 os.environ 计算（类定义时 .env 尚未加载，
+    # 会导致手动部署即使配了 MYSQL_PASSWORD 也被误判为 SQLite）
+
+    @property
+    def USE_SQLITE(self) -> bool:
+        return os.environ.get("USE_SQLITE", "0") == "1" or not self.MYSQL_PASSWORD
     
     # Elasticsearch
     ES_HOST: str = os.environ.get("ES_HOST", "localhost")

@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
                 ("prometheus_url", "http://localhost:9090", "Prometheus 地址", "Prometheus 服务地址", "prometheus"),
                 ("prometheus_user", "", "Prometheus 用户名", "Basic Auth 用户名（可选）", "prometheus"),
                 ("prometheus_password", "", "Prometheus 密码", "Basic Auth 密码（可选）", "prometheus"),
-            ]
+
                 # Elasticsearch
                 ("es_host", "", "ES 地址", "Elasticsearch 主机地址", "es"),
                 ("es_port", "9200", "ES 端口", "Elasticsearch 端口", "es"),
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
                 ("grafana_auth_mode", "apikey", "Grafana 认证方式", "apikey 或 basic", "grafana"),
                 ("grafana_api_key", "", "Grafana API Key", "API Key（可选）", "grafana"),
                 ("grafana_user", "", "Grafana 用户名", "Basic Auth 用户名（可选）", "grafana"),
-                ("grafana_password", "", "Grafana 密码", "Basic Auth 密码（可选）", "grafana"),
+                ("grafana_password", "", "Grafana 密码", "Basic Auth 密码（可选）", "grafana"),            ]
             for _key, _val, _label, _desc, _grp in _prom_defaults:
                 if not _cfg_db.query(SystemConfig).filter(SystemConfig.key == _key).first():
                     _cfg_db.add(SystemConfig(

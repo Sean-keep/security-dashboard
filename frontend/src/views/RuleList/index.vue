@@ -714,6 +714,7 @@ const openCreate = async () => {
     // 预加载该索引的字段
     await loadIndexFields(defaultIndex)
   }
+  ruleForm.value.es_index = defaultIndex
   
   dialogVisible.value = true
 }
@@ -821,6 +822,7 @@ const submitRule = async () => {
       schedule_value: scheduleValue,
       stages,
       output_mapping: outputMapping,
+      es_index: ruleForm.value.es_index,
       actions: []
     }
 
