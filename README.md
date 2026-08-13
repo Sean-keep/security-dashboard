@@ -186,6 +186,11 @@ ES_INDEX=online*nginx*    # ES 索引通配符，按实际填写
 ES_VERIFY_CERTS=false
 ```
 
+> ⚠️ **手动部署必看**：
+> - `backend/.env` 必须通过 `python-dotenv` 加载（`requirements.txt` 已包含）。若启动时 `.env` 未被读取，`MYSQL_PASSWORD` 会落到空值，后端将**自动改用 SQLite**（`backend/data/security.db`），导致你连的 MySQL 看不到任何数据、登录 401。
+> - 确保 `MYSQL_PASSWORD` 为**非空真实密码**，且 `.env` 放在 `backend/` 目录下、在 `backend/` 目录启动 uvicorn。
+> - 验证后端实际连接的库：`cd backend && python -c "from app.core.config import settings; print(settings.USE_SQLITE, settings.database_url)"`（`USE_SQLITE=False` 且 URL 为 `mysql+...` 才正确）。
+
 ### 6. systemd 服务配置示例（Linux）
 
 **Web 服务**：`/etc/systemd/system/sec-backend.service`
