@@ -316,7 +316,8 @@ INSERT INTO system_config (`key`, value, label, description, group_name, updated
   ('grafana_auth_mode', 'apikey', 'Grafana 认证方式', 'apikey 或 basic', 'grafana', NOW()),
   ('grafana_api_key', '', 'Grafana API Key', 'API Key（可选）', 'grafana', NOW()),
   ('grafana_user', '', 'Grafana 用户名', 'Basic Auth 用户名（可选）', 'grafana', NOW()),
-  ('grafana_password', '', 'Grafana 密码', 'Basic Auth 密码（可选）', 'grafana', NOW());
+  ('grafana_password', '', 'Grafana 密码', 'Basic Auth 密码（可选）', 'grafana', NOW())
+ON DUPLICATE KEY UPDATE value=VALUES(value), label=VALUES(label), description=VALUES(description), group_name=VALUES(group_name), updated_at=NOW();
 
 -- ============================================================
 -- 默认管理员账号 (密码: 123456)
