@@ -68,6 +68,26 @@ async def lifespan(app: FastAPI):
                 ("prometheus_user", "", "Prometheus 用户名", "Basic Auth 用户名（可选）", "prometheus"),
                 ("prometheus_password", "", "Prometheus 密码", "Basic Auth 密码（可选）", "prometheus"),
             ]
+                # Elasticsearch
+                ("es_host", "", "ES 地址", "Elasticsearch 主机地址", "es"),
+                ("es_port", "9200", "ES 端口", "Elasticsearch 端口", "es"),
+                ("es_scheme", "https", "ES 协议", "http 或 https", "es"),
+                ("es_verify_certs", "false", "ES 验证证书", "https 时是否验证证书 (true/false)", "es"),
+                ("es_user", "", "ES 用户名", "Elasticsearch 用户名（可选）", "es"),
+                ("es_password", "", "ES 密码", "Elasticsearch 密码（可选）", "es"),
+                ("es_index", "security-logs-*", "ES 索引", "查询使用的索引通配符", "es"),
+                # MySQL
+                ("mysql_host", "localhost", "MySQL 地址", "MySQL 主机地址", "mysql"),
+                ("mysql_port", "3306", "MySQL 端口", "MySQL 端口", "mysql"),
+                ("mysql_user", "root", "MySQL 用户", "MySQL 用户名", "mysql"),
+                ("mysql_password", "", "MySQL 密码", "MySQL 密码", "mysql"),
+                ("mysql_database", "security_dashboard", "MySQL 数据库", "数据库名", "mysql"),
+                # Grafana
+                ("grafana_url", "", "Grafana 地址", "Grafana URL，如 http://192.168.1.100:3000", "grafana"),
+                ("grafana_auth_mode", "apikey", "Grafana 认证方式", "apikey 或 basic", "grafana"),
+                ("grafana_api_key", "", "Grafana API Key", "API Key（可选）", "grafana"),
+                ("grafana_user", "", "Grafana 用户名", "Basic Auth 用户名（可选）", "grafana"),
+                ("grafana_password", "", "Grafana 密码", "Basic Auth 密码（可选）", "grafana"),
             for _key, _val, _label, _desc, _grp in _prom_defaults:
                 if not _cfg_db.query(SystemConfig).filter(SystemConfig.key == _key).first():
                     _cfg_db.add(SystemConfig(
