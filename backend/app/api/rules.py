@@ -1,10 +1,13 @@
 """
 Rules API Endpoints - Security Rule Management
 """
+import orjson
+from fastapi.responses import JSONResponse
 import json
+import copy
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -170,9 +173,9 @@ async def es_indices(
         return Response(code=500, msg=str(e))
 
 
-@router.post("/es-preview", response_model=Response)
+@router.post("/es-preview")
 async def es_preview(
-    request: Dict[str, Any],
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -182,38 +185,41 @@ async def es_preview(
     Old format: {"nodes": [...], "index": "...", "limit": 20}
     New format: {"stages": [...], "output_mapping": {...}, "limit": 20}
     """
-    limit = min(100, request.get("limit", 20))
+    body = await request.json()
+    limit = min(100, body.get("limit", 20))
     
     try:
         es = _get_es(db)
         
-        stages = request.get("stages", [])
-        output_mapping = request.get("output_mapping", {})
+        stages = body.get("stages", [])
+        output_mapping = body.get("output_mapping", {})
         
         if stages:
             results = es.execute_multi_stage_rule(stages, output_mapping, limit=limit)
             first_index = stages[0].get("index", "") if stages else ""
             fields = es.get_index_fields(first_index)
-            return Response(data={
+            body_resp = {"code": 200, "msg": "success", "data": {
                 "total": len(results),
                 "preview": results,
                 "fields": fields,
                 "stages": stages,
                 "output_mapping": output_mapping
-            })
+            }}
         else:
-            nodes = request.get("nodes", [])
-            index = request.get("index", es.config.default_index)
+            nodes = body.get("nodes", [])
+            index = body.get("index", es.config.default_index)
             results = es.execute_query(index, nodes, limit=limit)
             fields = es.get_index_fields(index)
-            return Response(data={
+            body_resp = {"code": 200, "msg": "success", "data": {
                 "total": len(results),
                 "preview": results,
                 "fields": fields
-            })
-    
+            }}
+
+        return JSONResponse(content=orjson.loads(orjson.dumps(body_resp)))
+
     except Exception as e:
-        return Response(code=500, msg=str(e))
+        return JSONResponse(status_code=500, content=orjson.loads(orjson.dumps({"code": 500, "msg": str(e), "data": None})))
 
 
 # ==================== CRUD Routes ====================

@@ -35,7 +35,7 @@ class StageConfig(BaseModel):
     """Stage configuration"""
     id: str
     index: str
-    time_window: Optional[Dict[str, int]] = None  # {"minutes": 3}
+    time_window: Optional[Dict[str, Any]] = None  # {"value": 30, "unit": "minutes"} 或兼容旧的 {"minutes": 3}
     filters: List[FilterNode] = Field(default_factory=list)
     aggregation: Optional[AggregationConfig] = None
     join: Optional[JoinConfig] = None

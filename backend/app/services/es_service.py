@@ -440,23 +440,45 @@ class ESService:
         results = self._merge_stage_results(stage_results, stages, output_mapping or {})
 
         # Attach stage data per result for template rendering ({stage.field} syntax)
-        # Build a lookup: for each merged result, attach relevant stage result rows
+        # Use clean copies to break any circular references (e.g. result._stages -> itself)
         for r in results:
             r["_stages"] = {}
             for stage in stages:
                 sid = stage.get("id")
                 if sid in stage_results:
-                    r["_stages"][sid] = stage_results[sid]
+                    # Strip _stages from each row before attaching to avoid circular refs
+                    clean_rows = []
+                    for row in stage_results[sid]:
+                        row_copy = {k: v for k, v in row.items() if k != "_stages"}
+                        clean_rows.append(row_copy)
+                    r["_stages"][sid] = clean_rows
 
         return results
 
     def _build_time_filter(self, time_window: Dict) -> List[Dict]:
-        """Build time range filter"""
+        """Build time range filter. Supports both:
+        - {"minutes": 3}  (old format)
+        - {"value": 30, "unit": "minutes"}  (new frontend format)
+        """
         if not time_window:
             return []
 
         now = datetime.utcnow()
-        delta = timedelta(**time_window)
+
+        # New frontend format: {"value": 30, "unit": "minutes"}
+        if "value" in time_window and "unit" in time_window:
+            unit_map = {
+                "minutes": "minutes", "minute": "minutes", "min": "minutes",
+                "hours": "hours", "hour": "hours", "h": "hours",
+                "days": "days", "day": "days", "d": "days",
+                "seconds": "seconds", "second": "seconds", "s": "seconds"
+            }
+            unit_key = unit_map.get(time_window["unit"], time_window["unit"])
+            delta = timedelta(**{unit_key: int(time_window["value"])})
+        else:
+            # Old format: {"minutes": 3}
+            delta = timedelta(**time_window)
+
         gte_time = (now - delta).isoformat() + "Z"
 
         return [{"range": {"@timestamp": {"gte": gte_time}}}]

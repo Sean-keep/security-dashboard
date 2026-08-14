@@ -193,6 +193,27 @@ class RuleExecutor:
                     mapping = auto
                     break
         written = 0
+
+        # Collect all IPs and lookup country concurrently to avoid N x ~0.6s serial latency
+        _all_ips = []
+        _ip_seen = set()
+        for record in results:
+            _ip = self._resolve_field(mapping.get("ip_address", ""), record)
+            if _ip and _ip not in _ip_seen:
+                _ip_seen.add(_ip)
+                _all_ips.append(_ip)
+        _country_cache = {}
+        if _all_ips:
+            from concurrent.futures import ThreadPoolExecutor
+            _mw = min(10, len(_all_ips))
+            with ThreadPoolExecutor(max_workers=_mw) as _ex:
+                _futs = {_ex.submit(_lookup_country_single, i): i for i in _all_ips}
+                for _f in _futs:
+                    try:
+                        _country_cache[_futs[_f]] = _f.result()
+                    except Exception:
+                        _country_cache[_futs[_f]] = ""
+
         seen_ips = set()
         for record in results:
             ip = self._resolve_field(mapping.get("ip_address", ""), record)
@@ -223,10 +244,7 @@ class RuleExecutor:
 
             country = self._resolve_field(mapping.get("country", ""), record)
             if not country and ip:
-                try:
-                    country = _lookup_country_single(ip)
-                except Exception:
-                    country = ""
+                country = _country_cache.get(ip, "")
 
             # Upsert: 存在则累加 attack_count + 更新时间，不存在则插入
             existing = self.db_session.query(Address).filter(
