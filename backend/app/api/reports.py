@@ -44,6 +44,7 @@ def inspection_report(
     endpoint_ids: str = Query(default="", description="勾选整合的接收接口ID，逗号分隔；仅整合每个接口最近一条接收数据"),
     include_addresses: bool = Query(default=True, description="是否包含当日攻击地址"),
     include_monitoring: bool = Query(default=True, description="是否包含服务器监控"),
+    summary_text: str = Query(default="", description="今日速览总结文本（手动填写）"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -149,6 +150,7 @@ def inspection_report(
         "addresses": addresses,
         "servers": servers,
         "ingested": ingested,
+        "summary_text": summary_text,
         # scripts 预览仅含基本信息，不含 stdout
         "scripts_preview": [
             {
@@ -192,6 +194,7 @@ def inspection_report(
             "monitoring_error": err,
             "scripts": scripts_out,
             "ingested": ingested,
+            "summary_text": summary_text,
         }
     )
 
@@ -255,6 +258,7 @@ def get_report(
             "scripts_preview": content.get("scripts_preview", []),
             "scripts": scripts,
             "ingested": content.get("ingested", []),
+            "summary_text": content.get("summary_text", ""),
         }
     )
 
