@@ -41,7 +41,7 @@
 
         <template v-if="currentReport">
           <!-- 汇总 -->
-          <el-card shadow="never" class="mb-16">
+          <el-card shadow="never" class="mb-16" v-if="currentReport.addresses !== null || currentReport.servers !== null || currentReport.script_count > 0">
             <template #header>
               <div class="card-header">
                 <span class="card-title">巡检报告 · {{ currentReport.report_date }}</span>
@@ -65,7 +65,7 @@
                 <div class="s-label">Grafana/Prometheus</div>
               </div>
               </template>
-              <div class="summary-item">
+              <div class="summary-item" v-if="currentReport.script_count > 0">
                 <div class="s-val">{{ currentReport.script_count }}</div>
                 <div class="s-label">脚本执行</div>
               </div>
@@ -122,7 +122,7 @@
           </el-card>
 
           <!-- 脚本执行结果 -->
-          <el-card shadow="never" v-if="(currentReport.scripts || []).length">
+          <el-card shadow="never" v-if="currentReport.scripts && currentReport.scripts.length">
             <template #header>
               <div class="card-header">
                 <span class="card-title">脚本执行结果</span>
@@ -145,7 +145,7 @@
           </el-card>
 
           <!-- 接收数据（最近一条） -->
-          <el-card shadow="never" v-if="(currentReport.ingested || []).length">
+          <el-card shadow="never" v-if="currentReport.ingested && currentReport.ingested.length">
             <template #header>
               <div class="card-header">
                 <span class="card-title">接收数据（最近一条）</span>
@@ -212,17 +212,16 @@
     <!-- 预览弹窗 -->
     <el-dialog v-model="previewVisible" title="报告预览" width="900px" destroy-on-close>
       <template v-if="previewData">
-        <div class="summary summary-dlg">
-          <div class="summary-item"><div class="s-val">{{ previewData.address_count }}</div><div class="s-label">当日攻击地址</div></div>
-          <div class="summary-item"><div class="s-val">{{ (previewData.servers || []).length }}</div><div class="s-label">监控服务器</div></div>
-          <div class="summary-item"><div class="s-val">{{ previewData.script_count }}</div><div class="s-label">脚本执行</div></div>
-          <div class="summary-item">
+        <div class="summary summary-dlg" v-if="previewData.address_count > 0 || previewData.servers !== null || previewData.script_count > 0">
+          <div class="summary-item" v-if="previewData.address_count > 0"><div class="s-val">{{ previewData.address_count }}</div><div class="s-label">当日攻击地址</div></div>
+          <div class="summary-item" v-if="previewData.servers && previewData.servers.length"><div class="s-val">{{ previewData.servers.length }}</div><div class="s-label">监控服务器</div></div>
+          <div class="summary-item" v-if="previewData.script_count > 0"><div class="s-val">{{ previewData.script_count }}</div><div class="s-label">脚本执行</div></div>
+          <div class="summary-item" v-if="previewData.servers !== null">
             <div class="s-val" :class="previewData.monitoring_connected ? 'ok' : 'bad'">{{ previewData.monitoring_connected ? '已连接' : '未连接' }}</div>
             <div class="s-label">Grafana/Prometheus</div>
           </div>
         </div>
 
-        <el-divider content-position="left">攻击地址</el-divider>
         <template v-if="previewData.addresses !== null">
           <el-divider content-position="left">攻击地址</el-divider>
         <el-table :data="previewData.addresses || []" border stripe size="small" max-height="280">
@@ -255,7 +254,7 @@
           </div>
         </template>
 
-        <template v-if="(previewData.scripts || []).length">
+        <template v-if="previewData.scripts && previewData.scripts.length">
           <el-divider content-position="left">脚本执行结果</el-divider>
           <div class="script-list">
             <div v-for="sc in previewData.scripts" :key="sc.id" class="script-block">
@@ -272,7 +271,7 @@
           </div>
         </template>
 
-        <template v-if="(previewData.ingested || []).length">
+        <template v-if="previewData.ingested && previewData.ingested.length">
           <el-divider content-position="left">接收数据（最近一条）</el-divider>
           <div class="script-list">
             <div v-for="it in previewData.ingested" :key="it.endpoint_name" class="script-block">
@@ -447,7 +446,12 @@ const buildText = (data) => {
   L.push(`        安全巡检报告 · ${r.report_date}`)
   L.push('═══════════════════════════════════════════════')
   L.push(`生成时间: ${r.generated_at}`)
-  L.push(`当日攻击地址: ${r.address_count} ｜ 监控服务器: ${(r.servers || []).length} ｜ 脚本执行: ${r.script_count} ｜ 监控: ${r.monitoring_connected ? '已连接' : '未连接'}`)
+  const txtParts = []
+  if (r.addresses !== null) txtParts.push(`当日攻击地址: ${r.address_count}`)
+  if (r.servers !== null) txtParts.push(`监控服务器: ${(r.servers || []).length}`)
+  if (r.script_count > 0) txtParts.push(`脚本执行: ${r.script_count}`)
+  if (r.servers !== null) txtParts.push(`监控: ${r.monitoring_connected ? '已连接' : '未连接'}`)
+  if (txtParts.length) L.push(txtParts.join(' ｜ '))
   L.push('───────────────────────────────────────────────')
   if (r.addresses && r.addresses.length) {
     L.push('【攻击地址】')
@@ -459,9 +463,6 @@ const buildText = (data) => {
     L.push(`   攻击次数: ${a.attack_count}`)
     L.push(`   攻击域名: ${a.domain || '-'}`)
   })
-    L.push('───────────────────────────────────────────────')
-  } else {
-    L.push('【攻击地址】（未勾选包含）')
     L.push('───────────────────────────────────────────────')
   }
   if (r.servers && r.servers.length) {
@@ -475,24 +476,23 @@ const buildText = (data) => {
     })
   })
     L.push('───────────────────────────────────────────────')
-  } else {
-    L.push('【服务器监控】（未勾选包含）')
-    L.push('───────────────────────────────────────────────')
   }
-  L.push('【脚本执行结果】')
-  if (!(r.scripts || []).length) L.push('（未勾选脚本，未执行）')
+  if (r.scripts && r.scripts.length) {
+    L.push('【脚本执行结果】')
   ;(r.scripts || []).forEach((sc, i) => {
     L.push(`${i + 1}. ${sc.name} [${sc.script_type}] 退出码 ${sc.exit_code}`)
     if (sc.stdout) L.push('   ' + sc.stdout.replace(/\n/g, '\n   '))
     if (sc.stderr) L.push('   错误: ' + sc.stderr.replace(/\n/g, '\n   '))
   })
-  L.push('───────────────────────────────────────────────')
-  L.push('【接收数据（最近一条）】')
-  if (!(r.ingested || []).length) L.push('（未勾选接收端口）')
+    L.push('───────────────────────────────────────────────')
+  }
+  if (r.ingested && r.ingested.length) {
+    L.push('【接收数据（最近一条）】')
   ;(r.ingested || []).forEach((it, i) => {
     L.push(`${i + 1}. 端口: ${it.endpoint_name} ｜ 接收时间: ${it.received_at}`)
     if (it.payload) L.push('   ' + it.payload.replace(/\n/g, '\n   '))
   })
+  }
   L.push('═══════════════════════════════════════════════')
   return L.join('\n')
 }
@@ -504,7 +504,12 @@ const buildHtml = (data) => {
   L.push('<head><meta charset="utf-8"><title>巡检报告</title></head><body>')
   L.push(`<h2>安全巡检报告 · ${r.report_date}</h2>`)
   L.push(`<p>生成时间：${r.generated_at}</p>`)
-  L.push(`<p>当日攻击地址：${r.address_count} ｜ 监控服务器：${(r.servers || []).length} ｜ 脚本执行：${r.script_count} ｜ 监控：${r.monitoring_connected ? '已连接' : '未连接'}</p>`)
+  const htmlParts = []
+  if (r.addresses !== null) htmlParts.push(`当日攻击地址：${r.address_count}`)
+  if (r.servers !== null) htmlParts.push(`监控服务器：${(r.servers || []).length}`)
+  if (r.script_count > 0) htmlParts.push(`脚本执行：${r.script_count}`)
+  if (r.servers !== null) htmlParts.push(`监控：${r.monitoring_connected ? '已连接' : '未连接'}`)
+  if (htmlParts.length) L.push(`<p>${htmlParts.join(' ｜ ')}</p>`)
   if (r.addresses && r.addresses.length) {
     L.push('<h3>攻击地址</h3>')
   ;(r.addresses || []).forEach((a, i) => {
@@ -515,8 +520,6 @@ const buildHtml = (data) => {
     L.push(`攻击次数: ${a.attack_count}<br/>`)
     L.push(`攻击域名: ${a.domain || '-'}</p>`)
   })
-  } else {
-    L.push('<h3>攻击地址</h3><p>（未勾选包含）</p>')
   }
   if (r.servers && r.servers.length) {
     L.push('<h3>服务器监控</h3>')
@@ -529,25 +532,25 @@ const buildHtml = (data) => {
     })
     L.push('</p>')
   })
-  } else {
-    L.push('<h3>服务器监控</h3><p>（未勾选包含）</p>')
   }
-  L.push('<h3>脚本执行结果</h3>')
-  if (!(r.scripts || []).length) L.push('<p>（未勾选脚本，未执行）</p>')
+  if (r.scripts && r.scripts.length) {
+    L.push('<h3>脚本执行结果</h3>')
   ;(r.scripts || []).forEach((sc, i) => {
     L.push(`<p><b>${i + 1}. ${sc.name}</b> [${sc.script_type}] 退出码 ${sc.exit_code}<br/>`)
     if (sc.stdout) L.push(`<pre>${sc.stdout.replace(/</g, '&lt;')}</pre>`)
     if (sc.stderr) L.push(`<pre>错误: ${sc.stderr.replace(/</g, '&lt;')}</pre>`)
     L.push('</p>')
   })
-  L.push('<h3>接收数据（最近一条）</h3>')
-  if (!(r.ingested || []).length) L.push('<p>（未勾选接收端口）</p>')
+  }
+  if (r.ingested && r.ingested.length) {
+    L.push('<h3>接收数据（最近一条）</h3>')
   ;(r.ingested || []).forEach((it, i) => {
     L.push(`<p><b>${i + 1}. ${it.endpoint_name}</b> ｜ 接收时间: ${it.received_at}<br/>`)
     if (it.payload) L.push(`<pre>${it.payload.replace(/</g, '&lt;')}</pre>`)
     L.push('</p>')
   })
-  L.push('</body></html>')
+  }
+  L.push('<\/' + 'body><\/' + 'html>')
   return L.join('')
 }
 
