@@ -42,6 +42,8 @@ def inspection_report(
     date: str = Query(default="", description="报告日期 YYYY-MM-DD，默认今天（CST）"),
     script_ids: str = Query(default="", description="勾选执行的脚本ID，逗号分隔；为空则不执行任何脚本"),
     endpoint_ids: str = Query(default="", description="勾选整合的接收接口ID，逗号分隔；仅整合每个接口最近一条接收数据"),
+    include_addresses: bool = Query(default=True, description="是否包含当日攻击地址"),
+    include_monitoring: bool = Query(default=True, description="是否包含服务器监控"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -57,29 +59,35 @@ def inspection_report(
     day_end = day_start + timedelta(days=1) - timedelta(seconds=1)
 
     # Part 1: 地址列表
-    addrs = (
-        db.query(Address)
-        .filter(Address.created_at >= day_start, Address.created_at <= day_end)
-        .order_by(Address.attack_count.desc())
-        .all()
-    )
-    addresses = [
-        {
-            "ip_address": a.ip_address,
-            "country": a.country or "",
-            "domain": a.domain or "",
-            "start_time": format_dt(a.start_time),
-            "end_time": format_dt(a.end_time),
-            "duration": a.duration or 0,
-            "attack_count": a.attack_count or 0,
-        }
-        for a in addrs
-    ]
+    if include_addresses:
+        addrs = (
+            db.query(Address)
+            .filter(Address.created_at >= day_start, Address.created_at <= day_end)
+            .order_by(Address.attack_count.desc())
+            .all()
+        )
+        addresses = [
+            {
+                "ip_address": a.ip_address,
+                "country": a.country or "",
+                "domain": a.domain or "",
+                "start_time": format_dt(a.start_time),
+                "end_time": format_dt(a.end_time),
+                "duration": a.duration or 0,
+                "attack_count": a.attack_count or 0,
+            }
+            for a in addrs
+        ]
+    else:
+        addresses = []
 
     # Part 2: 服务器监控（24 小时）
-    is_today = day_start.date() == now.date()
-    end_ts = int(_time.time()) if is_today else int(day_end.timestamp())
-    servers, prom_url, err = _compute_server_metrics(db, end_ts, 86400)
+    if include_monitoring:
+        is_today = day_start.date() == now.date()
+        end_ts = int(_time.time()) if is_today else int(day_end.timestamp())
+        servers, prom_url, err = _compute_server_metrics(db, end_ts, 86400)
+    else:
+        servers, err = [], None
 
     # Part 3: 脚本执行（仅勾选）
     scripts_out = []

@@ -15,6 +15,8 @@
               size="default"
               style="width: 180px"
             />
+            <el-checkbox v-model="includeAddresses">包含当日攻击地址</el-checkbox>
+            <el-checkbox v-model="includeMonitoring">包含服务器监控</el-checkbox>
             <el-button type="primary" :loading="loading" @click="generateReport">生成巡检报告</el-button>
             <el-button :disabled="!currentReport" @click="exportWord">导出 Word</el-button>
             <el-button :disabled="!currentReport" @click="exportTxt">导出 TXT</el-button>
@@ -294,6 +296,8 @@ const activeTab = ref('generate')
 
 // ── 生成报告 ──
 const selectedDate = ref(formatToday())
+const includeAddresses = ref(true)
+const includeMonitoring = ref(true)
 const loading = ref(false)
 const currentReport = ref(null)
 const scriptOptions = ref([])
@@ -366,6 +370,8 @@ const generateReport = async () => {
   loading.value = true
   try {
     const params = { date: selectedDate.value }
+    if (!includeAddresses.value) params.include_addresses = '0'
+    if (!includeMonitoring.value) params.include_monitoring = '0'
     if (selectedScriptIds.value.length) params.script_ids = selectedScriptIds.value.join(',')
     if (selectedEndpointIds.value.length) params.endpoint_ids = selectedEndpointIds.value.join(',')
     const res = await reports.inspection(params)
@@ -438,7 +444,8 @@ const buildText = (data) => {
   L.push(`生成时间: ${r.generated_at}`)
   L.push(`当日攻击地址: ${r.address_count} ｜ 监控服务器: ${(r.servers || []).length} ｜ 脚本执行: ${r.script_count} ｜ 监控: ${r.monitoring_connected ? '已连接' : '未连接'}`)
   L.push('───────────────────────────────────────────────')
-  L.push('【攻击地址】')
+  if (r.addresses && r.addresses.length) {
+    L.push('【攻击地址】')
   ;(r.addresses || []).forEach((a, i) => {
     const country = a.country ? `（${a.country}）` : ''
     L.push(`${i + 1}. 攻击地址: ${a.ip_address}${country}`)
@@ -447,8 +454,13 @@ const buildText = (data) => {
     L.push(`   攻击次数: ${a.attack_count}`)
     L.push(`   攻击域名: ${a.domain || '-'}`)
   })
-  L.push('───────────────────────────────────────────────')
-  L.push('【服务器监控】')
+    L.push('───────────────────────────────────────────────')
+  } else {
+    L.push('【攻击地址】（未勾选包含）')
+    L.push('───────────────────────────────────────────────')
+  }
+  if (r.servers && r.servers.length) {
+    L.push('【服务器监控】')
   ;(r.servers || []).forEach((s, i) => {
     L.push(`${i + 1}. ${s.alias || ''} ${s.instance}`)
     L.push(`   CPU 均值 ${s.cpu?.avg ?? '-'}% / 峰值 ${s.cpu?.peak ?? '-'}%`)
@@ -457,7 +469,11 @@ const buildText = (data) => {
       L.push(`   磁盘 ${dk.mountpoint} 均值 ${dk.avg ?? '-'}% / 峰值 ${dk.peak ?? '-'}%`)
     })
   })
-  L.push('───────────────────────────────────────────────')
+    L.push('───────────────────────────────────────────────')
+  } else {
+    L.push('【服务器监控】（未勾选包含）')
+    L.push('───────────────────────────────────────────────')
+  }
   L.push('【脚本执行结果】')
   if (!(r.scripts || []).length) L.push('（未勾选脚本，未执行）')
   ;(r.scripts || []).forEach((sc, i) => {
@@ -484,7 +500,8 @@ const buildHtml = (data) => {
   L.push(`<h2>安全巡检报告 · ${r.report_date}</h2>`)
   L.push(`<p>生成时间：${r.generated_at}</p>`)
   L.push(`<p>当日攻击地址：${r.address_count} ｜ 监控服务器：${(r.servers || []).length} ｜ 脚本执行：${r.script_count} ｜ 监控：${r.monitoring_connected ? '已连接' : '未连接'}</p>`)
-  L.push('<h3>攻击地址</h3>')
+  if (r.addresses && r.addresses.length) {
+    L.push('<h3>攻击地址</h3>')
   ;(r.addresses || []).forEach((a, i) => {
     const country = a.country ? `（${a.country}）` : ''
     L.push(`<p><b>${i + 1}. 攻击地址:</b> ${a.ip_address}${country}<br/>`)
@@ -493,7 +510,11 @@ const buildHtml = (data) => {
     L.push(`攻击次数: ${a.attack_count}<br/>`)
     L.push(`攻击域名: ${a.domain || '-'}</p>`)
   })
-  L.push('<h3>服务器监控</h3>')
+  } else {
+    L.push('<h3>攻击地址</h3><p>（未勾选包含）</p>')
+  }
+  if (r.servers && r.servers.length) {
+    L.push('<h3>服务器监控</h3>')
   ;(r.servers || []).forEach((s, i) => {
     L.push(`<p><b>${i + 1}. ${s.alias || ''} ${s.instance}</b><br/>`)
     L.push(`CPU 均值 ${s.cpu?.avg ?? '-'}% / 峰值 ${s.cpu?.peak ?? '-'}%<br/>`)
@@ -503,6 +524,9 @@ const buildHtml = (data) => {
     })
     L.push('</p>')
   })
+  } else {
+    L.push('<h3>服务器监控</h3><p>（未勾选包含）</p>')
+  }
   L.push('<h3>脚本执行结果</h3>')
   if (!(r.scripts || []).length) L.push('<p>（未勾选脚本，未执行）</p>')
   ;(r.scripts || []).forEach((sc, i) => {
