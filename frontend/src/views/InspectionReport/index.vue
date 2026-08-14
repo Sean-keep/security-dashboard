@@ -49,17 +49,14 @@
               </div>
             </template>
             <div class="summary">
-              <div class="summary-item">
+              <div class="summary-item" v-if="currentReport.addresses !== null">
                 <div class="s-val">{{ currentReport.address_count }}</div>
                 <div class="s-label">当日攻击地址</div>
               </div>
+              <template v-if="currentReport.servers !== null">
               <div class="summary-item">
                 <div class="s-val">{{ (currentReport.servers || []).length }}</div>
                 <div class="s-label">监控服务器</div>
-              </div>
-              <div class="summary-item">
-                <div class="s-val">{{ currentReport.script_count }}</div>
-                <div class="s-label">脚本执行</div>
               </div>
               <div class="summary-item">
                 <div class="s-val" :class="currentReport.monitoring_connected ? 'ok' : 'bad'">
@@ -67,13 +64,18 @@
                 </div>
                 <div class="s-label">Grafana/Prometheus</div>
               </div>
+              </template>
+              <div class="summary-item">
+                <div class="s-val">{{ currentReport.script_count }}</div>
+                <div class="s-label">脚本执行</div>
+              </div>
             </div>
-            <el-alert v-if="!currentReport.monitoring_connected && currentReport.monitoring_error"
+            <el-alert v-if="currentReport.servers !== null && !currentReport.monitoring_connected && currentReport.monitoring_error"
               type="warning" :closable="false" show-icon :title="currentReport.monitoring_error" style="margin-top:12px" />
           </el-card>
 
           <!-- 攻击地址 -->
-          <el-card shadow="never" class="mb-16">
+          <el-card shadow="never" class="mb-16" v-if="currentReport.addresses !== null">
             <template #header>
               <div class="card-header">
                 <span class="card-title">当日攻击地址（按攻击次数排序）</span>
@@ -93,7 +95,7 @@
           </el-card>
 
           <!-- 服务器监控（仅数字） -->
-          <el-card shadow="never" class="mb-16" v-if="(currentReport.servers || []).length">
+          <el-card shadow="never" class="mb-16" v-if="currentReport.servers !== null">
             <template #header>
               <div class="card-header">
                 <span class="card-title">服务器监控</span>
@@ -221,6 +223,8 @@
         </div>
 
         <el-divider content-position="left">攻击地址</el-divider>
+        <template v-if="previewData.addresses !== null">
+          <el-divider content-position="left">攻击地址</el-divider>
         <el-table :data="previewData.addresses || []" border stripe size="small" max-height="280">
           <el-table-column prop="ip_address" label="IP" min-width="140" />
           <el-table-column prop="country" label="国家" width="130" show-overflow-tooltip />
@@ -228,8 +232,9 @@
           <el-table-column prop="start_time" label="起始时间" width="165" />
           <el-table-column prop="attack_count" label="次数" width="90" align="right" />
         </el-table>
+        </template>
 
-        <template v-if="(previewData.servers || []).length">
+        <template v-if="previewData.servers !== null">
           <el-divider content-position="left">服务器监控</el-divider>
           <div class="server-list">
             <div v-for="s in previewData.servers" :key="s.instance" class="server-card">

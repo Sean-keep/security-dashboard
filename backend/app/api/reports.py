@@ -79,7 +79,7 @@ def inspection_report(
             for a in addrs
         ]
     else:
-        addresses = []
+        addresses = None
 
     # Part 2: 服务器监控（24 小时）
     if include_monitoring:
@@ -87,7 +87,7 @@ def inspection_report(
         end_ts = int(_time.time()) if is_today else int(day_end.timestamp())
         servers, prom_url, err = _compute_server_metrics(db, end_ts, 86400)
     else:
-        servers, err = [], None
+        servers, err = None, None
 
     # Part 3: 脚本执行（仅勾选）
     scripts_out = []
