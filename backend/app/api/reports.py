@@ -169,7 +169,7 @@ def inspection_report(
     rec = InspectionReport(
         report_date=report_date_str,
         generated_at=generated_at_str,
-        address_count=len(addresses),
+        address_count=len(addresses) if addresses else 0,
         script_count=len(scripts_out),
         content=json.dumps(content, ensure_ascii=False),
         scripts_json=scripts_json_str,
@@ -184,7 +184,7 @@ def inspection_report(
             "id": rec.id,
             "report_date": report_date_str,
             "generated_at": generated_at_str,
-            "address_count": len(addresses),
+            "address_count": len(addresses) if addresses else 0,
             "script_count": len(scripts_out),
             "addresses": addresses,
             "servers": servers,
