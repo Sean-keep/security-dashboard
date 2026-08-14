@@ -21,19 +21,38 @@
             <el-button :disabled="!currentReport" @click="exportWord">导出 Word</el-button>
             <el-button :disabled="!currentReport" @click="exportTxt">导出 TXT</el-button>
           </div>
-          <div class="script-pick" v-if="scriptOptions.length">
-            <span class="sp-label">勾选脚本:</span>
-            <el-checkbox-group v-model="selectedScriptIds" size="small">
-              <el-checkbox v-for="sc in scriptOptions" :key="sc.id" :label="sc.id" border>{{ sc.name }}</el-checkbox>
-            </el-checkbox-group>
-            <span class="sp-hint" v-if="!selectedScriptIds.length">未勾选则不执行脚本</span>
-          </div>
-          <div class="script-pick" v-if="endpointOptions.length">
-            <span class="sp-label">勾选接收端口:</span>
-            <el-checkbox-group v-model="selectedEndpointIds" size="small">
-              <el-checkbox v-for="ep in endpointOptions" :key="ep.id" :label="ep.id" border>{{ ep.name }}</el-checkbox>
-            </el-checkbox-group>
-            <span class="sp-hint" v-if="!selectedEndpointIds.length">未勾选则不整合接收数据</span>
+          <!-- 数据来源勾选 -->
+          <div class="pick-panel" v-if="scriptOptions.length || endpointOptions.length">
+            <div class="pick-row" v-if="scriptOptions.length">
+              <div class="pick-head">
+                <span class="pick-title">执行脚本</span>
+                <div class="pick-actions">
+                  <el-button link type="primary" size="small" @click="selectAllScripts">全选</el-button>
+                  <el-button link size="small" @click="clearScripts">清空</el-button>
+                </div>
+              </div>
+              <div class="pick-box">
+                <el-checkbox-group v-model="selectedScriptIds" size="small">
+                  <el-checkbox v-for="sc in scriptOptions" :key="sc.id" :label="sc.id" border>{{ sc.name }}</el-checkbox>
+                </el-checkbox-group>
+              </div>
+              <span class="pick-hint" v-if="!selectedScriptIds.length">未勾选则不执行脚本</span>
+            </div>
+            <div class="pick-row" v-if="endpointOptions.length">
+              <div class="pick-head">
+                <span class="pick-title">整合接收端口</span>
+                <div class="pick-actions">
+                  <el-button link type="primary" size="small" @click="selectAllEndpoints">全选</el-button>
+                  <el-button link size="small" @click="clearEndpoints">清空</el-button>
+                </div>
+              </div>
+              <div class="pick-box">
+                <el-checkbox-group v-model="selectedEndpointIds" size="small">
+                  <el-checkbox v-for="ep in endpointOptions" :key="ep.id" :label="ep.id" border>{{ ep.name }}</el-checkbox>
+                </el-checkbox-group>
+              </div>
+              <span class="pick-hint" v-if="!selectedEndpointIds.length">未勾选则不整合接收数据</span>
+            </div>
           </div>
         </el-card>
 
@@ -308,6 +327,12 @@ const scriptOptions = ref([])
 const selectedScriptIds = ref([])
 const endpointOptions = ref([])
 const selectedEndpointIds = ref([])
+
+// ── 全选 / 清空 ──
+const selectAllScripts = () => { selectedScriptIds.value = scriptOptions.value.map(s => s.id) }
+const clearScripts = () => { selectedScriptIds.value = [] }
+const selectAllEndpoints = () => { selectedEndpointIds.value = endpointOptions.value.map(ep => ep.id) }
+const clearEndpoints = () => { selectedEndpointIds.value = [] }
 
 // ── 勾选状态持久化（默认恢复上次生成报告的勾选） ──
 const STORAGE_SCRIPTS = 'report_selected_scripts'
@@ -599,9 +624,16 @@ const removeReport = (row) => {
 <style scoped>
 .mb-16 { margin-bottom: 16px; }
 .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.script-pick { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-.sp-label { font-size: 13px; color: #606266; flex-shrink: 0; line-height: 32px; }
-.sp-hint { font-size: 12px; color: #c0c4cc; line-height: 32px; }
+.pick-panel { margin-top: 14px; border: 1px solid #ebeef5; border-radius: 8px; padding: 14px 16px; background: #fafafa; }
+.pick-row { margin-bottom: 18px; }
+.pick-row:last-child { margin-bottom: 0; }
+.pick-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.pick-title { font-size: 13px; font-weight: 600; color: #303133; }
+.pick-actions { display: flex; gap: 2px; }
+.pick-box { max-height: 168px; overflow-y: auto; padding: 4px 2px; border: 1px solid #f0f0f0; border-radius: 6px; background: #fff; }
+.pick-box :deep(.el-checkbox-group) { display: flex; flex-wrap: wrap; gap: 8px; }
+.pick-box :deep(.el-checkbox) { margin-right: 0; margin-bottom: 0; }
+.pick-hint { font-size: 12px; color: #c0c4cc; margin-top: 8px; display: block; }
 .card-header { display: flex; align-items: center; gap: 10px; }
 .card-title { font-weight: 600; font-size: 15px; }
 
