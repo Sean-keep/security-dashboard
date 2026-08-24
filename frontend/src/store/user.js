@@ -17,18 +17,6 @@ export const useUserStore = defineStore('user', () => {
     return u.role === 'admin' || (u.user && u.user.role === 'admin')
   })
 
-  // If there's a token but no role, fetch fresh userInfo
-  if (token.value && !isAdmin.value) {
-    import('@/api/request').then(({ default: request }) => {
-      request.get('/auth/me').then(res => {
-        if (res.data) {
-          const info = res.data.user ? res.data.user : res.data
-          userInfo.value = info
-          localStorage.setItem('userInfo', JSON.stringify(info))
-        }
-      }).catch(() => {})
-    })
-  }
 
   function setAuth(t, info) {
     token.value = t

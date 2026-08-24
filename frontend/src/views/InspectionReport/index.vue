@@ -82,6 +82,10 @@
               <span class="ov-label">今日速览（总结性说明，生成报告时填写）：</span>
               <el-input v-model="summaryText" type="textarea" :rows="4"
                 placeholder="如：1、无可用性问题，ospay线上服务器内存使用率峰值超过80%&#10;2、nginx日志发现7个ip攻击行为，无入侵成功迹象..." />
+              <div class="ov-actions">
+                <el-button size="small" type="primary" plain :loading="savingTpl" @click="saveSummaryTemplate">保存为默认模板</el-button>
+                <span class="ov-hint">保存后，下次生成报告时自动填入此模板</span>
+              </div>
             </div>
           </div>
         </el-card>
@@ -334,6 +338,32 @@ const DEFAULT_SUMMARY = `1、无可用性问题，ospay线上服务器内存使�
 3、代理IP剩余流量:1116.17GB，预计还可以使用111天（预计每天消耗10G）
 4、短信网关余额：304.72372，预计还可以使用30天（预计每天消耗10）`
 const summaryText = ref(DEFAULT_SUMMARY)
+const savingTpl = ref(false)
+
+// ── 今日速览默认模板（后端 system_config 持久化） ──
+const loadSummaryTemplate = async () => {
+  try {
+    const res = await reports.getSummaryTemplate()
+    const tpl = res.data?.template
+    if (tpl) summaryText.value = tpl
+  } catch (e) { /* 加载失败时用前端内置默认值 */ }
+}
+const saveSummaryTemplate = async () => {
+  const tpl = String(summaryText.value || '').trim()
+  if (!tpl) {
+    ElMessage.warning('模板不能为空')
+    return
+  }
+  savingTpl.value = true
+  try {
+    await reports.saveSummaryTemplate(tpl)
+    ElMessage.success('默认模板已保存')
+  } catch (e) {
+    ElMessage.error('保存模板失败: ' + (e.message || '未知错误'))
+  } finally {
+    savingTpl.value = false
+  }
+}
 const scriptOptions = ref([])
 const selectedScriptIds = ref([])
 const endpointOptions = ref([])
@@ -413,6 +443,8 @@ function formatToday() {
 }
 
 onMounted(async () => {
+  // 优先加载后端保存的今日速览默认模板（没有则保留内置默认值）
+  loadSummaryTemplate()
   try {
     const res = await reportMgmt.list({ page: 1, page_size: 1 })
     // just a connectivity check
@@ -706,6 +738,8 @@ const removeReport = (row) => {
 .ov-text { white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 13px; line-height: 1.7; color: #303133; background: #fafafa; border: 1px solid #ebeef5; border-radius: 6px; padding: 12px 14px; margin: 0; }
 .overview-edit { margin-top: 4px; }
 .ov-label { font-size: 13px; font-weight: 600; color: #303133; display: block; margin-bottom: 8px; }
+.ov-actions { margin-top: 8px; display: flex; align-items: center; gap: 10px; }
+.ov-hint { font-size: 12px; color: #909399; }
 .s-val { font-size: 24px; font-weight: 700; color: #303133; }
 .s-val.ok { color: #67c23a; }
 .s-val.bad { color: #f56c6c; }

@@ -10,7 +10,7 @@ import time as _time
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.models.script import Script
 from app.models.inspection_report import InspectionReport
 from app.models.ingest_endpoint import IngestEndpoint
 from app.models.ingest_log import IngestLog
+from app.models.config import SystemConfig
 from app.api.security import get_current_user
 from app.api.inspect import _compute_server_metrics, _run_script
 from app.utils.timezone import format_dt, now_cst
@@ -228,6 +229,49 @@ def list_reports(
         for r in rows
     ]
     return Response(data={"total": total, "items": items, "page": page, "page_size": page_size})
+
+
+# ── 今日速览默认模板（可编辑保存，存 system_config）───────────────────
+DEFAULT_SUMMARY_TEMPLATE = """1、无可用性问题，ospay线上服务器内存使用率峰值超过80%
+2、nginx日志发现7个ip攻击行为，无入侵成功迹象
+3、代理IP剩余流量:1116.17GB，预计还可使用111天（预计每天消耗10G）
+4、短信网关余额:304.72372元，预计还可使用30天（预计每天消耗10）"""
+
+
+@router.get("/summary-template", response_model=Response)
+def get_summary_template(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    cfg = db.query(SystemConfig).filter(SystemConfig.key == "summary_template").first()
+    if cfg and cfg.value:
+        return Response(data={"template": cfg.value})
+    return Response(data={"template": DEFAULT_SUMMARY_TEMPLATE})
+
+
+@router.put("/summary-template", response_model=Response)
+def save_summary_template(
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    template = str(body.get("template", "")).strip()
+    if not template:
+        return Response(code=400, msg="模板不能为空")
+    cfg = db.query(SystemConfig).filter(SystemConfig.key == "summary_template").first()
+    if cfg:
+        cfg.value = template
+    else:
+        cfg = SystemConfig(
+            key="summary_template",
+            value=template,
+            label="今日速览默认模板",
+            description="巡检报告「今日速览」默认文本（可在页面上编辑保存）",
+            group_name="report"
+        )
+        db.add(cfg)
+    db.commit()
+    return Response(msg="默认模板已保存")
 
 
 # ── 报告预览（含 stdout）───────────────────────────────────────────────────────

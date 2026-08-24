@@ -1,6 +1,5 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import router from '@/router'
 
 // 确保 ElMessage 可用
 const showMessage = (msg, type = 'error') => {
@@ -25,6 +24,24 @@ request.interceptors.request.use(config => {
   return config
 })
 
+// 401/403 处理：清除登录态并跳到登录页（hash 路由）
+// 注意：不能用 window.location.href = '/login' —— hash 模式下会整页重载并落到 #/ 根路由，
+// 根路由无 auth 守卫会重定向回 #/dashboard，首个请求又 401，形成无限刷新死循环。
+let redirecting = false
+const redirectToLogin = () => {
+  if (redirecting) return
+  redirecting = true
+  localStorage.clear()
+  if (window.location.hash === '#/login') {
+    // 已在登录页仍收到 401（极端情况），强制整页刷新一次兜底，跳出可能的脏状态
+    window.location.reload()
+  } else {
+    window.location.hash = '#/login'
+  }
+  // 留出时间让后续并发的 401 不再重复触发
+  setTimeout(() => { redirecting = false }, 1000)
+}
+
 // 响应拦截器：统一错误处理
 request.interceptors.response.use(
   response => {
@@ -37,8 +54,7 @@ request.interceptors.response.use(
     if (res.code !== 0 && res.code !== 200) {
       if (res.code === 401 || res.code === 403) {
         showMessage(res.msg || '登录已过期，请重新登录')
-        localStorage.clear()
-        router.push('/login')
+        redirectToLogin()
       } else {
         showMessage(res.msg || '请求失败')
       }
@@ -49,8 +65,7 @@ request.interceptors.response.use(
   error => {
     if (error.response?.status === 401) {
       showMessage('登录已过期')
-      localStorage.clear()
-      router.push('/login')
+      redirectToLogin()
     } else {
       showMessage(error.response?.data?.msg || '网络错误')
     }

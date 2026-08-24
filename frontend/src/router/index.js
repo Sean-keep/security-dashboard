@@ -54,6 +54,10 @@ router.beforeEach((to, from, next) => {
     const target = INSPECTION_TAB_MAP[to.query.tab]
     if (target) return next(`/inspection/${target}`)
   }
+  // auth 守卫：未登录不得进入业务页面（避免 401 循环）
+  if (to.path !== '/login' && !localStorage.getItem('token')) {
+    return next('/login')
+  }
   next()
 })
 

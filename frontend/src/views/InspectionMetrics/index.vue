@@ -64,7 +64,7 @@
           </div>
 
           <!-- 别名编辑区 -->
-          <div v-if="aliasEditing[s.instance]" class="alias-edit">
+          <div v-if="aliasEditing[s.instance] !== undefined" class="alias-edit">
             <el-input
               v-model="aliasEditing[s.instance]"
               size="small"
@@ -142,17 +142,6 @@ import * as echarts from 'echarts'
 const userStore = useUserStore()
 const isAdmin = computed(() => userStore.isAdmin)
 
-// Ensure role is loaded (handles stale localStorage from old login sessions)
-if (!userStore.isAdmin && userStore.isLoggedIn) {
-  import('@/api/request').then(({ default: request }) => {
-    request.get('/auth/me').then(res => {
-      if (res.data?.role) {
-        userStore.userInfo = res.data
-        localStorage.setItem('userInfo', JSON.stringify(res.data))
-      }
-    }).catch(() => {})
-  })
-}
 
 const loading = ref(false)
 const metrics = ref(null)
@@ -261,6 +250,13 @@ const loadMetrics = async () => {
       }
     }
   })
+  // 清理 aliasEditing：移除已不在服务器列表中的过时条目
+  const aliveInstances = new Set(serverList.value.map(s => s.instance))
+  Object.keys(aliasEditing).forEach(key => {
+    if (!aliveInstances.has(key)) {
+      delete aliasEditing[key]
+    }
+  })
 }
 
 // ── 别名编辑 ──
@@ -269,25 +265,32 @@ const startEditAlias = (instance, currentAlias) => {
 }
 
 const saveAlias = async (instance) => {
-  const alias = (aliasEditing[instance] || '').trim()
-  // 合并到当前 aliases
+  const alias = String(aliasEditing[instance] || '').trim()
+  // 提前读取当前别名，避免 loadMetrics 后 serverList 变化导致读错
+  const selfAlias = alias
+  // 立即关闭编辑区
+  delete aliasEditing[instance]
+  // 收集其他服务器的现有别名
   const current = {}
   for (const s of serverList.value) {
-    if (s.alias) current[s.instance] = s.alias
+    if (s.alias && s.instance !== instance) {
+      current[s.instance] = s.alias
+    }
   }
-  if (alias) {
-    current[instance] = alias
+  // 设置新别名（覆盖/新增）
+  if (selfAlias) {
+    current[instance] = selfAlias
   } else {
     delete current[instance]
   }
   try {
     await inspectApi.setServerAliases(current)
     ElMessage.success('别名已保存')
-    delete aliasEditing[instance]
     // 刷新数据
     await loadMetrics()
   } catch (e) {
-    console.error(e)
+    ElMessage.error('保存别名失败: ' + (e.message || '未知错误'))
+    console.error('[saveAlias failed]', e)
   }
 }
 

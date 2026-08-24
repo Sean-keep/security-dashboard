@@ -55,8 +55,10 @@ import { ref, reactive } from 'vue'
 import { User, Lock } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import request from '@/api/request'
+import { useUserStore } from '@/store/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 const loginFormRef = ref()
 const loading = ref(false)
 
@@ -83,8 +85,7 @@ const handleLogin = async () => {
       const token = res.data?.token
       const user = res.data?.user
       if (token) {
-        localStorage.setItem('token', token)
-        if (user) localStorage.setItem('userInfo', JSON.stringify(user))
+        userStore.setAuth(token, user)
         router.push('/dashboard')
       } else {
         throw new Error('登录失败：未获取到 token')
