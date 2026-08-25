@@ -637,7 +637,7 @@ const buildStageParams = (stage) => {
       group_by: stage.aggregation.groupBy,
       metric: stage.aggregation.metric,
       alias: stage.aggregation.alias || 'count',
-      having: stage.aggregation.having.value > 0 ? stage.aggregation.having : null
+      having: stage.aggregation.having
     }
   }
 
@@ -688,7 +688,6 @@ const openCreate = async () => {
   scheduleValueObj.unit = 'minutes'
   writeMysqlEnabled.value = false
   createAlertEnabled.value = false
-  severityConditions.value = []
   stageFieldsCache.value = {}
   
   // 获取系统默认ES索引配置

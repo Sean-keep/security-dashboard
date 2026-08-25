@@ -238,15 +238,25 @@ DEFAULT_SUMMARY_TEMPLATE = """1、无可用性问题，ospay线上服务器内�
 4、短信网关余额:304.72372元，预计还可使用30天（预计每天消耗10）"""
 
 
+def _get_report_template_cfg(db):
+    cfg = db.query(SystemConfig).filter(SystemConfig.key == "report_template").first()
+    if cfg and cfg.value:
+        try:
+            return json.loads(cfg.value)
+        except Exception:
+            return {}
+    return {}
+
+
 @router.get("/summary-template", response_model=Response)
 def get_summary_template(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    cfg = db.query(SystemConfig).filter(SystemConfig.key == "summary_template").first()
-    if cfg and cfg.value:
-        return Response(data={"template": cfg.value})
-    return Response(data={"template": DEFAULT_SUMMARY_TEMPLATE})
+    """返回报告默认模板：template=今日速览文本，config=完整页面配置（勾选/顺序）"""
+    cfg = _get_report_template_cfg(db)
+    template = cfg.get("summary_text", "") or DEFAULT_SUMMARY_TEMPLATE
+    return Response(data={"template": template, "config": cfg.get("config", {})})
 
 
 @router.put("/summary-template", response_model=Response)
@@ -255,18 +265,24 @@ def save_summary_template(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """保存报告默认模板。兼容两种入参：
+    1. {template: "..."} — 仅保存今日速览文本（向后兼容）
+    2. {template: "...", config: {...}} — 保存完整页面配置
+    """
     template = str(body.get("template", "")).strip()
     if not template:
         return Response(code=400, msg="模板不能为空")
-    cfg = db.query(SystemConfig).filter(SystemConfig.key == "summary_template").first()
+    config = body.get("config") or {}
+    payload = {"summary_text": template, "config": config}
+    cfg = db.query(SystemConfig).filter(SystemConfig.key == "report_template").first()
     if cfg:
-        cfg.value = template
+        cfg.value = json.dumps(payload, ensure_ascii=False)
     else:
         cfg = SystemConfig(
-            key="summary_template",
-            value=template,
-            label="今日速览默认模板",
-            description="巡检报告「今日速览」默认文本（可在页面上编辑保存）",
+            key="report_template",
+            value=json.dumps(payload, ensure_ascii=False),
+            label="巡检报告默认模板",
+            description="巡检报告完整页面配置（今日速览/勾选/顺序，可在页面上编辑保存）",
             group_name="report"
         )
         db.add(cfg)

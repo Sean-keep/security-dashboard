@@ -64,12 +64,15 @@ def render_alert_template(template: str, result: dict, output_mapping: dict = No
     # Also support _output_mapping injected by reverse_output_mapping()
     _om = output_mapping or result.get("_output_mapping")
     reverse_map = {}
+    _om_info = {}
     if _om:
         for out_name, mapping_info in _om.items():
             if isinstance(mapping_info, dict):
                 f = mapping_info.get("field", "")
+                _om_info[out_name] = mapping_info
             else:
                 f = str(mapping_info)
+                _om_info[out_name] = {"field": f}
             if f:
                 reverse_map[out_name] = f
 
@@ -89,14 +92,47 @@ def render_alert_template(template: str, result: dict, output_mapping: dict = No
             else:
                 val = match.group(0)
         else:
-            # Simple field: try original key first, then reverse-mapped English key
+            # Simple field: try original key first
             val = result.get(path)
+            # If not found, and output_mapping maps this placeholder to a stage
+            # field, resolve it from _stages (avoids flat-key collision where
+            # multiple outputs map to the same English key like "count")
+            if val is None and path in _om_info:
+                info = _om_info[path]
+                src = info.get("from_stage")
+                field = info.get("field", "")
+                if src and field and src in result.get("_stages", {}):
+                    stage_rows = result["_stages"][src]
+                    if isinstance(stage_rows, list) and stage_rows:
+                        # Try to match by src_ip to get the right row
+                        matched = None
+                        current_ip = result.get("src_ip", result.get("remote_addr"))
+                        if current_ip:
+                            for sr in stage_rows:
+                                if sr.get("src_ip") == current_ip:
+                                    matched = sr
+                                    break
+                        # Only use value if we found an exact match;
+                        # don't fall back to stage_rows[0] which may be a different IP
+                        if matched:
+                            v2 = matched.get(field)
+                            if v2 is not None:
+                                val = v2
+                    elif isinstance(stage_rows, dict):
+                        v2 = stage_rows.get(field)
+                        if v2 is not None:
+                            val = v2
+            # Fallback: reverse-mapped English key
             if val is None and path in reverse_map:
                 val = result.get(reverse_map[path])
             if val is None:
                 val = match.group(0)
         if not isinstance(val, (str, int, float)):
             val = str(val)
+        # 字段值为 0/"0" 时：数字类字段（次数/count）保留，
+        # 其他字段（如域名/地址）归一化为空串，避免「攻击域名:0」脏值
+        if val in (0, "0") and not ("count" in path or "次数" in path):
+            return ""
         return str(val)
     return _re.sub(r"\{([^}]+)\}", replacer, template)
 
@@ -277,7 +313,11 @@ class RuleExecutor:
         return written
 
     def _evaluate_severity(self, result: dict, default: str, conditions: list) -> str:
-        """根据条件判断实际危险等级，默认中等，满足条件则升为指定等级"""
+        """根据条件判断实际危险等级，默认中等，满足条件则升为指定等级
+        
+        注意：只使用 result 中的扁平字段值，不从 _stages 中查找，
+        避免其他 stage 的值影响当前结果的危险等级判断。
+        """
         # 等级优先级：critical > high > medium > low
         priority = {"low": 0, "medium": 1, "high": 2, "critical": 3}
         effective = priority.get(default, 1)
@@ -286,7 +326,8 @@ class RuleExecutor:
             op = cond.get("operator", "==")
             target = cond.get("value")
             up_severity = cond.get("severity", "high")
-            actual_val = self._resolve_field(field, result)
+            # 只从扁平 result 中取值，不使用 _resolve_field（会 fallback 到 _stages）
+            actual_val = result.get(field)
             matched = self._compare(actual_val, op, target)
             if matched:
                 up = priority.get(up_severity, 2)
@@ -340,7 +381,9 @@ class RuleExecutor:
         count = 0
         for result in results:
             ip = result.get("src_ip", result.get("ip_address", result.get("攻击地址", "")))
-            domain = result.get("server_name", result.get("domain", result.get("攻击域名", "")))
+            # 域名：取第一个非空、非 0 的值；关联 stage 查不到时可能为 0/空
+            _raw_domain = result.get("server_name", result.get("domain", result.get("攻击域名", "")))
+            domain = _raw_domain if _raw_domain not in (None, "", 0, "0") else ""
             template = action.get("template", "")
             if template:
                 content_text = render_alert_template(template, result)
@@ -376,13 +419,38 @@ class RuleExecutor:
             return None
         if path.isdigit():
             return path
-        parts = path.split(".")
-        val = record
-        for part in parts:
-            if isinstance(val, dict):
-                val = val.get(part)
-            else:
-                return None
+        # 支持 {stage.field} 语法
+        if "." in path:
+            parts = path.split(".", 1)
+            stage_name, field = parts
+            stages = record.get("_stages", {}) if isinstance(record, dict) else {}
+            if stage_name in stages:
+                rows = stages[stage_name]
+                if isinstance(rows, list) and rows:
+                    v = rows[0].get(field)
+                    return str(v) if v is not None else None
+                if isinstance(rows, dict):
+                    v = rows.get(field)
+                    return str(v) if v is not None else None
+            return None
+        # 普通扁平 key
+        val = None
+        if isinstance(record, dict):
+            val = record.get(path)
+            # 扁平 key 取不到时，尝试从 output_mapping 的 stage 路径解析
             if val is None:
-                return None
+                om = record.get("_output_mapping") or {}
+                info = om.get(path)
+                if isinstance(info, dict):
+                    src = info.get("from_stage")
+                    f = info.get("field", "")
+                    if src and f:
+                        stages = record.get("_stages", {})
+                        rows = stages.get(src)
+                        if isinstance(rows, list) and rows:
+                            val = rows[0].get(f)
+                        elif isinstance(rows, dict):
+                            val = rows.get(f)
+        if val is None:
+            return None
         return str(val) if val is not None else None

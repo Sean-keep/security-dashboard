@@ -84,7 +84,7 @@
                 placeholder="如：1、无可用性问题，ospay线上服务器内存使用率峰值超过80%&#10;2、nginx日志发现7个ip攻击行为，无入侵成功迹象..." />
               <div class="ov-actions">
                 <el-button size="small" type="primary" plain :loading="savingTpl" @click="saveSummaryTemplate">保存为默认模板</el-button>
-                <span class="ov-hint">保存后，下次生成报告时自动填入此模板</span>
+                <span class="ov-hint">保存后，下次进入此页自动套用今日速览、勾选（服务器监控/脚本/接收端口）与板块顺序</span>
               </div>
             </div>
           </div>
@@ -340,12 +340,38 @@ const DEFAULT_SUMMARY = `1、无可用性问题，ospay线上服务器内存使�
 const summaryText = ref(DEFAULT_SUMMARY)
 const savingTpl = ref(false)
 
-// ── 今日速览默认模板（后端 system_config 持久化） ──
+// ── 今日速览默认模板（后端 system_config 持久化，保存完整页面配置） ──
+const applyTemplate = (tpl) => {
+  if (!tpl) return
+  // 今日速览
+  if (tpl.template) summaryText.value = tpl.template
+  const cfg = tpl.config || {}
+  // 勾选：服务器监控 / 攻击地址
+  if (typeof cfg.include_addresses === 'boolean') includeAddresses.value = cfg.include_addresses
+  if (typeof cfg.include_monitoring === 'boolean') includeMonitoring.value = cfg.include_monitoring
+  // 勾选：脚本（需选项已加载，过滤不存在的）
+  if (Array.isArray(cfg.script_ids) && scriptOptions.value.length) {
+    const valid = new Set(scriptOptions.value.map(s => s.id))
+    selectedScriptIds.value = cfg.script_ids.filter(id => valid.has(id))
+  }
+  // 勾选 + 顺序：接收端口（需选项已加载）
+  if (Array.isArray(cfg.endpoint_ids) && endpointOptions.value.length) {
+    const valid = new Set(endpointOptions.value.map(ep => ep.id))
+    const merged = cfg.endpoint_ids.filter(id => valid.has(id))
+    // 补上模板没勾但存在的新端口？不补，保持模板顺序的严格子集
+    selectedEndpointIds.value = merged
+  }
+  // 板块顺序
+  if (Array.isArray(cfg.section_order) && cfg.section_order.length === SECTION_KEYS.length
+      && cfg.section_order.every(k => SECTION_KEYS.includes(k))) {
+    sectionOrder.value = [...cfg.section_order]
+  }
+}
+
 const loadSummaryTemplate = async () => {
   try {
     const res = await reports.getSummaryTemplate()
-    const tpl = res.data?.template
-    if (tpl) summaryText.value = tpl
+    applyTemplate(res.data)
   } catch (e) { /* 加载失败时用前端内置默认值 */ }
 }
 const saveSummaryTemplate = async () => {
@@ -354,10 +380,17 @@ const saveSummaryTemplate = async () => {
     ElMessage.warning('模板不能为空')
     return
   }
+  const cfg = {
+    include_addresses: includeAddresses.value,
+    include_monitoring: includeMonitoring.value,
+    script_ids: selectedScriptIds.value.slice(),
+    endpoint_ids: selectedEndpointIds.value.slice(),
+    section_order: sectionOrder.value.slice()
+  }
   savingTpl.value = true
   try {
-    await reports.saveSummaryTemplate(tpl)
-    ElMessage.success('默认模板已保存')
+    await reports.saveSummaryTemplate(tpl, cfg)
+    ElMessage.success('默认模板已保存（含今日速览、勾选与顺序）')
   } catch (e) {
     ElMessage.error('保存模板失败: ' + (e.message || '未知错误'))
   } finally {
@@ -443,12 +476,6 @@ function formatToday() {
 }
 
 onMounted(async () => {
-  // 优先加载后端保存的今日速览默认模板（没有则保留内置默认值）
-  loadSummaryTemplate()
-  try {
-    const res = await reportMgmt.list({ page: 1, page_size: 1 })
-    // just a connectivity check
-  } catch (e) {}
   try {
     const r = await reportMgmt.list({ page: 1, page_size: 1 })
     const scriptsRes = await import('@/api').then(m => m.inspectApi?.listScripts())
@@ -467,9 +494,11 @@ onMounted(async () => {
   } catch (e) {
     endpointOptions.value = []
   }
-  // 选项加载完成后，恢复上次勾选与板块顺序
+  // 选项加载完成后：恢复上次勾选与板块顺序，再应用后端默认模板（模板优先）
   restoreSelection()
   restoreOrder()
+  // 优先加载后端保存的完整默认模板（含今日速览、勾选、顺序）
+  await loadSummaryTemplate()
 })
 
 const generateReport = async () => {

@@ -97,7 +97,7 @@ export const inspectApi = {
 export const reports = {
   inspection: (params) => request.get('/reports/inspection', { params }),
   getSummaryTemplate: () => request.get('/reports/summary-template'),
-  saveSummaryTemplate: (template) => request.put('/reports/summary-template', { template }),
+  saveSummaryTemplate: (template, config) => request.put('/reports/summary-template', { template, config }),
 }
 
 // 宸℃鎶ュ憡绠＄悊

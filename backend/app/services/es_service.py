@@ -440,18 +440,41 @@ class ESService:
         results = self._merge_stage_results(stage_results, stages, output_mapping or {})
 
         # Attach stage data per result for template rendering ({stage.field} syntax)
-        # Use clean copies to break any circular references (e.g. result._stages -> itself)
+        # Each result only gets its own matching row from each stage, not all rows.
+        # This prevents template rendering from always picking the first row's values.
         for r in results:
             r["_stages"] = {}
             for stage in stages:
                 sid = stage.get("id")
                 if sid in stage_results:
-                    # Strip _stages from each row before attaching to avoid circular refs
-                    clean_rows = []
+                    # Find the row in this stage that matches the current result
+                    # Match by comparing the primary output field values
+                    matched_row = None
                     for row in stage_results[sid]:
                         row_copy = {k: v for k, v in row.items() if k != "_stages"}
-                        clean_rows.append(row_copy)
-                    r["_stages"][sid] = clean_rows
+                        # Check if this row's values overlap with the result's values
+                        is_match = True
+                        for out_field, mapping in (output_mapping or {}).items():
+                            if isinstance(mapping, dict):
+                                src_stage = mapping.get("from_stage")
+                                src_field = mapping.get("field", "")
+                            else:
+                                src_stage = None
+                                src_field = str(mapping)
+                            if src_stage == sid and src_field and src_field in row_copy:
+                                # This stage field maps to an output field
+                                # Check if the result has this output field with the same value
+                                if out_field in r and r[out_field] != row_copy.get(src_field):
+                                    is_match = False
+                                    break
+                        if is_match:
+                            matched_row = row_copy
+                            break
+                    if matched_row:
+                        r["_stages"][sid] = [matched_row]
+                    else:
+                        # Fallback: attach all rows (shouldn't normally happen)
+                        r["_stages"][sid] = [{k: v for k, v in row.items() if k != "_stages"} for row in stage_results[sid]]
 
         return results
 
@@ -784,19 +807,36 @@ class ESService:
         for stage in stages[1:]:
             stage_id = stage.get("id")
             join = stage.get("join")
-            if not join:
-                continue
-            local_field = join.get("local_field")
-            if not local_field:
-                continue
+            if join:
+                local_field = join.get("local_field")
+                if not local_field:
+                    continue
 
-            lookup = {}
-            for row in stage_results.get(stage_id, []):
-                key = row.get(local_field)
-                if key is not None:
-                    lookup[key] = row
+                lookup = {}
+                for row in stage_results.get(stage_id, []):
+                    key = row.get(local_field)
+                    if key is not None:
+                        lookup[key] = row
 
-            stage_lookup_tables[stage_id] = {"lookup": lookup, "join": join}
+                stage_lookup_tables[stage_id] = {"lookup": lookup, "join": join}
+            else:
+                # Independent aggregation stage (no join): build lookup
+                # by the stage's own group_by fields so we can match
+                # with the primary stage rows.
+                agg = stage.get("aggregation")
+                if agg:
+                    group_by = agg.get("group_by", [])
+                    if group_by:
+                        lookup = {}
+                        for row in stage_results.get(stage_id, []):
+                            # Use first group_by field as key
+                            key = row.get(group_by[0])
+                            if key is not None:
+                                lookup[key] = row
+                        stage_lookup_tables[stage_id] = {
+                            "lookup": lookup,
+                            "join": {"local_field": group_by[0], "remote_field": group_by[0]}
+                        }
 
         # Build final output
         # Preserve time stats from primary stage (start_time / end_time / duration)
@@ -821,7 +861,9 @@ class ESService:
                     remote_field = join.get("remote_field")
                     join_key = primary_row.get(remote_field)
                     matched_row = lookup.get(join_key, {})
-                    output_row[out_field] = matched_row.get(source_field, 0)
+                    # 关联查不到记录时返回空字符串而非 0，
+                    # 避免告警内容出现「攻击域名:0」这类脏值
+                    output_row[out_field] = matched_row.get(source_field, "")
                 else:
                     output_row[out_field] = None
 

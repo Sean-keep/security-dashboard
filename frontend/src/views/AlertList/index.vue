@@ -56,8 +56,14 @@
       </template>
       <el-table :data="tableData" stripe @selection-change="onSelectionChange" ref="tableRef">
         <el-table-column type="selection" width="40" />
-        <el-table-column prop="title" label="告警标题" min-width="120" show-overflow-tooltip />
-        <el-table-column prop="content" label="告警内容" min-width="250" show-overflow-tooltip />
+        <el-table-column label="告警标题 / 内容" min-width="560">
+          <template #default="{ row }">
+            <div class="alert-title-row">
+              <span class="alert-title-text">{{ row.title }}</span>
+            </div>
+            <div class="alert-content-text" :title="row.content">{{ row.content }}</div>
+          </template>
+        </el-table-column>
         <el-table-column prop="severity" label="级别" width="80" align="center">
           <template #default="{ row }">
             <el-tag :type="severityTag(row.severity)" size="small">{{ row.severity }}</el-tag>
@@ -290,7 +296,7 @@ onMounted(loadData)
 .alert-title-row { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
 .rule-name { font-weight:700; font-size:13px; color:#303133; }
 .alert-title-text { font-weight:600; font-size:13px; color:#409EFF; }
-.alert-content-text { font-size:12px; color:#666; line-height:1.5; word-break:break-all; max-width:400px; }
+.alert-content-text { font-size:12px; color:#666; line-height:1.5; word-break:break-all; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:520px; }
 .ip-text { font-family:'Courier New',monospace; color:#409EFF; }
 .suggestion-text { font-size:12px; color:#666; }
 .empty-text { color:#bbb; }
