@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS alerts (
   category       VARCHAR(64)  DEFAULT '',
   handle_suggestion TEXT,
   raw_log        TEXT,
+  raw_logs       MEDIUMTEXT   NULL,
   created_at     DATETIME     NULL,
   confirmed_at   DATETIME     NULL,
   resolved_at    DATETIME     NULL,
