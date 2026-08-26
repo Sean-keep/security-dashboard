@@ -102,8 +102,8 @@
     </el-card>
 
     <!-- 详情弹窗 -->
-    <el-dialog v-model="detailVisible" title="告警详情" width="680px" destroy-on-close>
-      <el-descriptions :column="2" border v-if="detailData.id">
+    <el-dialog v-model="detailVisible" title="告警详情" width="700px" destroy-on-close>
+      <el-descriptions :column="2" border v-if="detailData.id" :label-style="{ width: '110px', whiteSpace: 'nowrap', wordBreak: 'keep-all' }" :content-style="{ minWidth: '150px' }">
         <el-descriptions-item label="严重等级">
           <el-tag :type="severityTag(detailData.severity)">{{ detailData.severity }}</el-tag>
         </el-descriptions-item>
@@ -111,7 +111,7 @@
           <el-tag :type="statusTag(detailData.status)">{{ statusLabel(detailData.status) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="来源IP">{{ detailData.src_ip || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="目标IP">{{ detailData.dst_ip || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="目的域名">{{ detailDomain }}</el-descriptions-item>
         <el-descriptions-item label="触发规则">{{ detailData.rule_name || '-' }}</el-descriptions-item>
         <el-descriptions-item label="产生时间">{{ detailData.created_at }}</el-descriptions-item>
         <el-descriptions-item label="确认时间">{{ detailData.confirmed_at || '-' }}</el-descriptions-item>
@@ -131,6 +131,30 @@
           <pre class="raw-log">{{ detailData.raw_log }}</pre>
         </el-descriptions-item>
       </el-descriptions>
+
+      <div v-if="detailData.raw_logs" style="margin-top:16px">
+        <el-collapse v-model="collapseActive">
+          <el-collapse-item name="es_logs">
+            <template #title>
+              <span style="font-weight:600">ES原始日志 ({{ parsedRawLogs.length }}条)</span>
+            </template>
+            <div class="raw-logs-container">
+              <div v-for="(log, idx) in parsedRawLogs" :key="idx" class="raw-log-entry">
+                <div class="raw-log-header">
+                  <span class="raw-log-time">{{ log['@timestamp'] || '-' }}</span>
+                  <el-tag size="small" type="info">{{ log.request_status || '-' }}</el-tag>
+                  <span class="raw-log-ip">{{ log.src_ip || log.remote_addr || '-' }}</span>
+                </div>
+                <div class="raw-log-detail">
+                  <span>{{ log.request_method || 'GET' }} {{ log.request_uri || '/' }}</span>
+                  <span v-if="log.server_name" class="raw-log-domain">{{ log.server_name }}</span>
+                  <span v-if="log.bytes" class="raw-log-bytes">{{ log.bytes }}B</span>
+                </div>
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
       </template>
@@ -139,7 +163,7 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { alerts } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -148,6 +172,16 @@ const total = ref(0)
 const multipleSelection = ref([])
 const detailVisible = ref(false)
 const detailData = ref({})
+const collapseActive = ref([]) // 默认折叠
+
+// 从 raw_log 提取目的域名
+const detailDomain = computed(() => {
+  if (!detailData.value.raw_log) return '-'
+  try {
+    const raw = JSON.parse(detailData.value.raw_log)
+    return raw.server_name || raw.domain || raw['攻击域名'] || '-'
+  } catch { return '-' }
+})
 const tableRef = ref()
 
 const filterForm = reactive({ keyword: '', severity: '', status: '' })
@@ -157,6 +191,17 @@ const pagination = reactive({ page: 1, page_size: 20 })
 const severityTag = (s) => ({ critical: 'danger', high: 'warning', medium: 'info', low: 'success' }[s] || 'info')
 const statusTag = (s) => ({ pending: 'warning', confirmed: 'primary', resolved: 'success', false_positive: 'info' }[s] || 'info')
 const statusLabel = (s) => ({ pending: '待处理', confirmed: '已确认', resolved: '已解决', false_positive: '误报' }[s] || s)
+
+// 解析ES原始日志JSON
+const parsedRawLogs = computed(() => {
+  if (!detailData.value.raw_logs) return []
+  try {
+    const logs = JSON.parse(detailData.value.raw_logs)
+    return Array.isArray(logs) ? logs : []
+  } catch {
+    return []
+  }
+})
 
 // 根据预设计算 date_from / date_to（ISO 时间戳）
 const buildDateRange = () => {
@@ -305,5 +350,23 @@ onMounted(loadData)
   font-size:12px; max-height:200px; overflow:auto;
   white-space:pre-wrap; word-break:break-all; margin:0;
 }
+.raw-logs-container { max-height:400px; overflow:auto; }
+.raw-log-entry { padding:8px; margin-bottom:6px; background:#f8f9fa; border-radius:4px; border-left:3px solid #409EFF; }
+.raw-log-header { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.raw-log-time { font-size:11px; color:#909399; font-family:monospace; }
+.raw-log-ip { font-size:12px; color:#409EFF; font-family:monospace; }
+.raw-log-detail { font-size:12px; color:#606266; display:flex; gap:12px; flex-wrap:wrap; }
+.raw-log-domain { color:#E6A23C; }
+.raw-log-bytes { color:#67C23A; }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; }
+
+</style>
+
+<style>
+.el-dialog .el-descriptions__label {
+  width: 110px !important;
+  min-width: 110px !important;
+  white-space: nowrap !important;
+  word-break: keep-all !important;
+}
 </style>

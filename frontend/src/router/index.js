@@ -10,6 +10,7 @@ import InspectionScripts from '@/views/InspectionScripts/index.vue'
 import InspectionReport from '@/views/InspectionReport/index.vue'
 import InspectionMetrics from '@/views/InspectionMetrics/index.vue'
 import Remote from '@/views/Remote/index.vue'
+import RawLogQuery from '@/views/RawLogQuery/index.vue'
 
 const routes = [
   { path: '/login', name: 'Login', component: Login },
@@ -22,6 +23,7 @@ const routes = [
       { path: 'addresses', name: 'AddressList', component: AddressList },
       { path: 'alerts', name: 'AlertList', component: AlertList },
       { path: 'rules', name: 'RuleList', component: RuleList },
+      { path: 'raw-logs', name: 'RawLogQuery', component: RawLogQuery },
       { path: 'settings', redirect: '/settings/users' },
       { path: 'settings/users', name: 'SettingsUsers', component: SystemSettings },
       { path: 'settings/connection', name: 'SettingsConnection', component: SystemSettings },

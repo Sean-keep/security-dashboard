@@ -321,6 +321,17 @@ class RuleExecutor:
         # 等级优先级：critical > high > medium > low
         priority = {"low": 0, "medium": 1, "high": 2, "critical": 3}
         effective = priority.get(default, 1)
+        # 构建中英文字段反向映射（中文->英文），用于 severity 条件匹配
+        # _output_mapping 格式: {"200请求数": {"from_stage": "...", "field": "200_count"}}
+        reverse_map = {}
+        om = result.get("_output_mapping") or {}
+        for cn_key, mapping_info in om.items():
+            if isinstance(mapping_info, dict):
+                eng_field = mapping_info.get("field", "")
+            else:
+                eng_field = str(mapping_info)
+            if eng_field:
+                reverse_map[cn_key] = eng_field
         for cond in conditions:
             field = cond.get("field", "")
             op = cond.get("operator", "==")
@@ -328,6 +339,9 @@ class RuleExecutor:
             up_severity = cond.get("severity", "high")
             # 只从扁平 result 中取值，不使用 _resolve_field（会 fallback 到 _stages）
             actual_val = result.get(field)
+            # 如果直接取不到，尝试通过反向映射找英文 key
+            if actual_val is None and field in reverse_map:
+                actual_val = result.get(reverse_map[field])
             matched = self._compare(actual_val, op, target)
             if matched:
                 up = priority.get(up_severity, 2)

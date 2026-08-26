@@ -136,3 +136,9 @@ export const remoteApi = {
   clearLogs: (id) => request.delete(`/remote/endpoints/${id}/logs`),
   deleteLog: (id) => request.delete(`/remote/logs/${id}`),
 }
+
+// ── 原始日志查询 ──
+export const rawLogs = {
+  query: (params) => request.post('/raw-logs/query', params),
+  fields: () => request.get('/raw-logs/fields'),
+}

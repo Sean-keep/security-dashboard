@@ -35,6 +35,50 @@ def _get_es_config_from_db(db) -> ESConfig:
     )
 
 
+def _store_raw_logs_for_alerts(db, es, stages, rule_id):
+    """为刚创建的告警获取并存储ES原始日志"""
+    from app.models.alert import Alert
+    try:
+        # 取stage_1的查询参数
+        stage1 = stages[0]
+        index = stage1.get("index") or es.config.default_index
+        filters = stage1.get("filters", [])
+        time_window = stage1.get("time_window", {})
+
+        # 查找该规则刚创建的告警（最近1分钟内）
+        from datetime import datetime, timedelta
+        recent_alerts = db.query(Alert).filter(
+            Alert.rule_id == rule_id,
+            Alert.created_at >= datetime.now() - timedelta(minutes=1),
+            Alert.src_ip != ""
+        ).all()
+
+        if not recent_alerts:
+            return
+
+        ips = list(set(a.src_ip for a in recent_alerts))
+
+        for ip in ips:
+            try:
+                # 构建查询：原filters + IP过滤
+                ip_filter = {"field": "src_ip", "operator": "equals", "value": ip}
+                query_filters = list(filters) + [ip_filter]
+                raw_docs = es.execute_query(index, query_filters, time_window, limit=500)
+
+                if raw_docs:
+                    raw_json = json.dumps(raw_docs, ensure_ascii=False, default=str)
+                    # 更新该IP的所有告警
+                    for alert in recent_alerts:
+                        if alert.src_ip == ip:
+                            alert.raw_logs = raw_json
+            except Exception as e:
+                print(f"[Scheduler] Failed to fetch raw logs for {ip}: {e}")
+
+        db.commit()
+    except Exception as e:
+        print(f"[Scheduler] Failed to store raw logs: {e}")
+
+
 class SchedulerService:
     """调度器服务单例"""
 
@@ -149,6 +193,10 @@ class SchedulerService:
                             act["_rule_severity"] = getattr(rule_obj, "severity", "medium")
                     executor = RuleExecutor(db)
                     written = executor.process_actions(actions, results)
+
+                    # 存储触发告警的ES原始日志
+                    if executor.last_alert_count > 0 and stages:
+                        _store_raw_logs_for_alerts(db, es, stages, rule_obj.id)
 
                     # 更新规则状态
                     rule_obj.last_run = datetime.now()

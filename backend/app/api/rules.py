@@ -443,6 +443,12 @@ async def execute_rule_endpoint(
                 act["_rule_severity"] = getattr(rule, "severity", "medium")
         executor = RuleExecutor(db)
         written = executor.process_actions(actions, results)
+
+        # 存储触发告警的ES原始日志
+        if executor.last_alert_count > 0 and stages:
+            from app.services.scheduler_service import _store_raw_logs_for_alerts
+            _store_raw_logs_for_alerts(db, es, stages, rule.id)
+
         rule.last_run = datetime.now()
         rule.run_count = (rule.run_count or 0) + 1
         db.commit()

@@ -30,6 +30,7 @@ class AlertResponse(BaseModel):
     category: str
     handle_suggestion: Optional[str] = None
     raw_log: str
+    raw_logs: Optional[str] = None
     created_at: Optional[datetime] = None
     confirmed_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None

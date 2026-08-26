@@ -14,6 +14,7 @@ from app.api.reports import router as reports_router
 from app.api.remote import router as remote_router
 from app.api.execution_logs import router as execution_logs_router
 from app.api.logs import router as logs_router
+from app.api.raw_logs import router as raw_logs_router
 
 
 @asynccontextmanager
@@ -140,6 +141,7 @@ app.include_router(logs_router, prefix="/api")
 app.include_router(reports_router)
 app.include_router(inspect_router)
 app.include_router(remote_router, prefix="/api")
+app.include_router(raw_logs_router, prefix="/api")
 
 
 @app.get("/")

@@ -28,6 +28,10 @@
           <el-icon><Odometer /></el-icon>
           <template #title>仪表盘</template>
         </el-menu-item>
+        <el-menu-item index="/raw-logs">
+          <el-icon><Document /></el-icon>
+          <template #title>原始日志</template>
+        </el-menu-item>
         <el-menu-item index="/addresses">
           <el-icon><Location /></el-icon>
           <template #title>地址列表</template>
