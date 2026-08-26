@@ -8,17 +8,17 @@
 
 前置：日志范式化，目前使用的是logstash（nginx日志解析配置如下）
 
-grok {
-
-    match => [
-    
-       "message",'(?<log_time>\S+\s\S+).*\[PID:(?<PID>\S+)\]\s\[(?<id>\S+)\]\s\[(?<name>\S+)\]\s\S\s(?<level>\S+)(?<msg>.*)',
+       grok {
        
-       "message",'(?<log_time>\S+\s\S+)\s(?<level>\S+)\s(?<msg>.*)'
-       
+           match => [
+           
+            "message",'(?<src_ip>[0-9a-fA-F:.]+) - - \[(?<log_time>\S+) \+0530\] \"(?<request_method>\S+)\s(?<request_url>\S+)\s\S+\s(?<request_status>\d+)\s(?<request_leng>\d+).*',
+            
+            "message",'(?<log_time>\S+\s\S+)\s\[(?<log_level>\S+)\]\s(?<pid>\S+)\:\s\S+\s(?<error_msg>.*)\sclient\:\s(?<src_ip>[0-9a-fA-F:.]+),\sserver:\s(?<server_name>\S+),\srequest:\s(?<request>.*),\shost:.*'
+            
           ]
           
-    }
+        }
 
 ## 技术栈
 
