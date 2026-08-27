@@ -433,6 +433,16 @@ class RuleExecutor:
             )
             db.add(alert)
             count += 1
+            # 同步更新地址表的威胁等级（取更高优先级）
+            if ip and final_severity:
+                priority = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+                from app.models.address import Address
+                addr = db.query(Address).filter(Address.ip_address == ip).order_by(Address.created_at.desc()).first()
+                if addr:
+                    cur = priority.get(addr.severity, 1)
+                    new = priority.get(final_severity, 1)
+                    if new > cur:
+                        addr.severity = final_severity
         db.commit()
         return count
 
