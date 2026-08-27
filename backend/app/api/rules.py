@@ -328,9 +328,27 @@ async def update_rule(
     if "output_mapping" in update_data and update_data["output_mapping"]:
         update_data["output_mapping"] = json.dumps({k: v.model_dump() if hasattr(v, "model_dump") else v for k, v in update_data["output_mapping"].items()}, ensure_ascii=False)
     if "actions" in update_data and update_data["actions"]:
-        # 注入危险等级
+        # 注入危险等级 - 深度转换 Pydantic 模型为 dict
+        raw_actions = update_data["actions"]
+        actions_list = []
+        for a in raw_actions:
+            if hasattr(a, "model_dump"):
+                a = a.model_dump()
+            elif hasattr(a, "dict"):
+                a = a.dict()
+            else:
+                a = dict(a)
+            # 深度转换嵌套对象
+            for key, val in a.items():
+                if isinstance(val, list):
+                    a[key] = [dict(item) if hasattr(item, "model_dump") else (dict(item) if hasattr(item, "dict") else item) for item in val]
+                elif hasattr(val, "model_dump"):
+                    a[key] = val.model_dump()
+                elif hasattr(val, "dict"):
+                    a[key] = val.dict()
+            actions_list.append(a)
         update_data["actions"] = json.dumps(
-            _inject_severity(update_data["actions"], request.severity or "medium"),
+            _inject_severity(actions_list, request.severity or "medium"),
             ensure_ascii=False
         )
     
