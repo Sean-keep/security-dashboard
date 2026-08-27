@@ -228,6 +228,9 @@ class RuleExecutor:
                 if auto:
                     mapping = auto
                     break
+        # Support severity_conditions for write_mysql action
+        severity_conditions = action.get("severity_conditions", [])
+        default_severity = mapping.get("severity", "medium")
         written = 0
 
         # Collect all IPs and lookup country concurrently to avoid N x ~0.6s serial latency
@@ -288,11 +291,16 @@ class RuleExecutor:
                 (Address.domain == domain_val) | (Address.domain.is_(None) & (domain_val == None))
             ).first()
 
+            # Evaluate severity based on conditions if available
+            record_severity = default_severity
+            if severity_conditions:
+                record_severity = self._evaluate_severity(record, default_severity, severity_conditions)
+
             if existing:
                 existing.attack_count = (existing.attack_count or 0) + count_val
                 existing.end_time = _end_dt
                 existing.duration = _dur_int
-                existing.severity = mapping.get("severity", existing.severity or "medium")
+                existing.severity = record_severity
                 existing.updated_at = datetime.now()
             else:
                 addr = Address(
@@ -304,7 +312,7 @@ class RuleExecutor:
                     start_time=_start_dt,
                     end_time=_end_dt,
                     duration=_dur_int,
-                    severity=mapping.get("severity", "medium"),
+                    severity=record_severity,
                     status="active"
                 )
                 self.db_session.add(addr)

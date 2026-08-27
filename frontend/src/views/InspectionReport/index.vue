@@ -116,9 +116,39 @@
                   <span class="card-sub">{{ (currentReport.addresses || []).length }} 条</span>
                 </div>
               </template>
-              <el-table :data="currentReport.addresses || []" border stripe size="small" max-height="460">
+
+              <!-- 严重级别：单独卡片展示 -->
+              <div v-if="criticalAddresses.length" class="critical-section">
+                <div class="critical-title">⚠️ 严重攻击地址（{{ criticalAddresses.length }} 条）</div>
+                <div v-for="a in criticalAddresses" :key="a.ip_address" class="critical-card">
+                  <div class="critical-header">
+                    <el-tag type="danger" effect="dark" size="small">严重</el-tag>
+                    <span class="critical-ip">{{ a.ip_address }}</span>
+                    <span v-if="a.country" class="critical-country">{{ a.country }}</span>
+                    <span class="critical-count">攻击 {{ a.attack_count }} 次</span>
+                  </div>
+                  <div class="critical-meta">
+                    <span v-if="a.domain">域名: {{ a.domain }}</span>
+                    <span>时间: {{ a.start_time }} ~ {{ a.end_time }}</span>
+                    <span>持续: {{ a.duration }}s</span>
+                  </div>
+                  <div v-if="a.handle_suggestion" class="critical-suggestion">
+                    <span class="suggestion-label">处置结果：</span>{{ a.handle_suggestion }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- 高危及以下：原有表格 -->
+              <el-table :data="normalAddresses" border stripe size="small" max-height="460">
                 <el-table-column type="index" label="#" width="48" />
                 <el-table-column prop="ip_address" label="IP 地址" min-width="150" />
+                <el-table-column label="严重级别" width="100" align="center">
+                  <template #default="{ row }">
+                    <el-tag :type="severityType(row.severity)" size="small" effect="plain">
+                      {{ severityLabel(row.severity) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="country" label="国家/地区" width="160" show-overflow-tooltip />
                 <el-table-column prop="domain" label="关联域名" min-width="170" show-overflow-tooltip />
                 <el-table-column prop="start_time" label="起始时间" width="170" />
@@ -165,10 +195,9 @@
                 <div v-for="sc in currentReport.scripts" :key="sc.id" class="script-block">
                   <div class="script-head">
                     <span class="script-name">{{ sc.name }}</span>
-                    <el-tag :type="sc.exit_code === 0 ? 'success' : 'danger'" size="small" effect="plain">
-                      {{ sc.exit_code === 0 ? '成功' : '失败' }}（退出码 {{ sc.exit_code }}）
+                    <el-tag v-if="sc.exit_code !== 0" type="danger" size="small" effect="plain">
+                      失败（退出码 {{ sc.exit_code }}）
                     </el-tag>
-                    <span class="script-type">{{ sc.script_type }}</span>
                   </div>
                   <pre class="script-out" v-if="sc.stdout">{{ sc.stdout }}</pre>
                   <pre class="script-err" v-if="sc.stderr">{{ sc.stderr }}</pre>
@@ -252,8 +281,25 @@
         <template v-for="key in sectionOrder" :key="key">
           <template v-if="key === 'addresses' && previewData.addresses !== null">
             <el-divider content-position="left">攻击地址</el-divider>
-            <el-table :data="previewData.addresses || []" border stripe size="small" max-height="280">
+            <!-- 严重级别 -->
+            <div v-for="a in (previewData.addresses || []).filter(x => x.severity === 'critical')" :key="a.ip_address" class="critical-card" style="margin-bottom:8px;">
+              <div class="critical-header">
+                <el-tag type="danger" effect="dark" size="small">严重</el-tag>
+                <span class="critical-ip">{{ a.ip_address }}</span>
+                <span class="critical-count">攻击 {{ a.attack_count }} 次</span>
+              </div>
+              <div v-if="a.handle_suggestion" class="critical-suggestion">
+                <span class="suggestion-label">处置结果：</span>{{ a.handle_suggestion }}
+              </div>
+            </div>
+            <!-- 高危及以下 -->
+            <el-table :data="(previewData.addresses || []).filter(x => x.severity !== 'critical')" border stripe size="small" max-height="280">
               <el-table-column prop="ip_address" label="IP" min-width="140" />
+              <el-table-column label="级别" width="80" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="severityType(row.severity)" size="small" effect="plain">{{ severityLabel(row.severity) }}</el-tag>
+                </template>
+              </el-table-column>
               <el-table-column prop="country" label="国家" width="130" show-overflow-tooltip />
               <el-table-column prop="domain" label="域名" min-width="160" show-overflow-tooltip />
               <el-table-column prop="start_time" label="起始时间" width="165" />
@@ -288,10 +334,9 @@
               <div v-for="sc in previewData.scripts" :key="sc.id" class="script-block">
                 <div class="script-head">
                   <span class="script-name">{{ sc.name }}</span>
-                  <el-tag :type="sc.exit_code === 0 ? 'success' : 'danger'" size="small" effect="plain">
-                    {{ sc.exit_code === 0 ? '成功' : '失败' }}（退出码 {{ sc.exit_code }}）
+                  <el-tag v-if="sc.exit_code !== 0" type="danger" size="small" effect="plain">
+                    失败（退出码 {{ sc.exit_code }}）
                   </el-tag>
-                  <span class="script-type">{{ sc.script_type }}</span>
                 </div>
                 <pre class="script-out" v-if="sc.stdout">{{ sc.stdout }}</pre>
                 <pre class="script-err" v-if="sc.stderr">{{ sc.stderr }}</pre>
@@ -319,7 +364,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { reports, reportMgmt, remoteApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Monitor, Refresh } from '@element-plus/icons-vue'
@@ -339,6 +384,16 @@ const DEFAULT_SUMMARY = `1、无可用性问题，ospay线上服务器内存使�
 4、短信网关余额：304.72372，预计还可以使用30天（预计每天消耗10）`
 const summaryText = ref(DEFAULT_SUMMARY)
 const savingTpl = ref(false)
+
+// ── 攻击地址按严重级别分组 ──
+const criticalAddresses = computed(() =>
+  (currentReport.value?.addresses || []).filter(a => a.severity === 'critical')
+)
+const normalAddresses = computed(() =>
+  (currentReport.value?.addresses || []).filter(a => a.severity !== 'critical')
+)
+const severityLabel = (s) => ({ critical: '严重', high: '高危', medium: '中危', low: '低危' }[s] || s)
+const severityType = (s) => ({ critical: 'danger', high: 'warning', medium: '', low: 'info' }[s] || '')
 
 // ── 今日速览默认模板（后端 system_config 持久化，保存完整页面配置） ──
 const applyTemplate = (tpl) => {
@@ -593,15 +648,32 @@ const buildText = (data) => {
   L.push('───────────────────────────────────────────────')
   for (const key of sectionOrder.value) {
     if (key === 'addresses' && r.addresses && r.addresses.length) {
-      L.push('【攻击地址】')
-      ;(r.addresses || []).forEach((a, i) => {
-        const country = a.country ? `（${a.country}）` : ''
-        L.push(`${i + 1}. 攻击地址: ${a.ip_address}${country}`)
-        L.push(`   攻击时间: ${a.start_time} ~ ${a.end_time}`)
-        L.push(`   持续时间: ${a.duration} 秒`)
-        L.push(`   攻击次数: ${a.attack_count}`)
-        L.push(`   攻击域名: ${a.domain || '-'}`)
-      })
+      const critical = r.addresses.filter(a => a.severity === 'critical')
+      const normal = r.addresses.filter(a => a.severity !== 'critical')
+      if (critical.length) {
+        L.push('【⚠️ 严重攻击地址】')
+        critical.forEach((a, i) => {
+          const country = a.country ? `（${a.country}）` : ''
+          L.push(`${i + 1}. 攻击地址: ${a.ip_address}${country}`)
+          L.push(`   攻击时间: ${a.start_time} ~ ${a.end_time}`)
+          L.push(`   攻击次数: ${a.attack_count}`)
+          L.push(`   攻击域名: ${a.domain || '-'}`)
+          if (a.handle_suggestion) L.push(`   处置结果: ${a.handle_suggestion}`)
+        })
+        L.push('')
+      }
+      if (normal.length) {
+        L.push('【攻击地址】')
+        normal.forEach((a, i) => {
+          const country = a.country ? `（${a.country}）` : ''
+          const lvl = { high: '高危', medium: '中危', low: '低危' }[a.severity] || ''
+          L.push(`${i + 1}. 攻击地址: ${a.ip_address}${country} [${lvl}]`)
+          L.push(`   攻击时间: ${a.start_time} ~ ${a.end_time}`)
+          L.push(`   持续时间: ${a.duration} 秒`)
+          L.push(`   攻击次数: ${a.attack_count}`)
+          L.push(`   攻击域名: ${a.domain || '-'}`)
+        })
+      }
       L.push('───────────────────────────────────────────────')
     } else if (key === 'monitoring' && r.servers && r.servers.length) {
       L.push('【服务器监控】')
@@ -617,7 +689,8 @@ const buildText = (data) => {
     } else if (key === 'scripts' && r.scripts && r.scripts.length) {
       L.push('【脚本执行结果】')
       ;(r.scripts || []).forEach((sc, i) => {
-        L.push(`${i + 1}. ${sc.name} [${sc.script_type}] 退出码 ${sc.exit_code}`)
+        const status = sc.exit_code === 0 ? '' : ` [失败, 退出码 ${sc.exit_code}]`
+        L.push(`${i + 1}. ${sc.name}${status}`)
         if (sc.stdout) L.push('   ' + sc.stdout.replace(/\n/g, '\n   '))
         if (sc.stderr) L.push('   错误: ' + sc.stderr.replace(/\n/g, '\n   '))
       })
@@ -653,15 +726,32 @@ const buildHtml = (data) => {
   if (htmlParts.length) L.push(`<p>${htmlParts.join(' ｜ ')}</p>`)
   for (const key of sectionOrder.value) {
     if (key === 'addresses' && r.addresses && r.addresses.length) {
-      L.push('<h3>攻击地址</h3>')
-      ;(r.addresses || []).forEach((a, i) => {
-        const country = a.country ? `（${a.country}）` : ''
-        L.push(`<p><b>${i + 1}. 攻击地址:</b> ${a.ip_address}${country}<br/>`)
-        L.push(`攻击时间: ${a.start_time} ~ ${a.end_time}<br/>`)
-        L.push(`持续时间: ${a.duration} 秒<br/>`)
-        L.push(`攻击次数: ${a.attack_count}<br/>`)
-        L.push(`攻击域名: ${a.domain || '-'}</p>`)
-      })
+      const critical = r.addresses.filter(a => a.severity === 'critical')
+      const normal = r.addresses.filter(a => a.severity !== 'critical')
+      if (critical.length) {
+        L.push('<h3 style="color:#f56c6c;">⚠️ 严重攻击地址</h3>')
+        critical.forEach((a, i) => {
+          const country = a.country ? `（${a.country}）` : ''
+          L.push(`<p style="border-left:3px solid #f56c6c;padding-left:10px;">`)
+          L.push(`<b>${i + 1}. ${a.ip_address}</b>${country}<br/>`)
+          L.push(`攻击时间: ${a.start_time} ~ ${a.end_time} ｜ 次数: ${a.attack_count}<br/>`)
+          L.push(`域名: ${a.domain || '-'}`)
+          if (a.handle_suggestion) L.push(`<br/><b style="color:#e6a23c;">处置结果：</b>${a.handle_suggestion}`)
+          L.push(`</p>`)
+        })
+      }
+      if (normal.length) {
+        L.push('<h3>攻击地址</h3>')
+        normal.forEach((a, i) => {
+          const country = a.country ? `（${a.country}）` : ''
+          const lvl = { high: '高危', medium: '中危', low: '低危' }[a.severity] || ''
+          L.push(`<p><b>${i + 1}. 攻击地址:</b> ${a.ip_address}${country} [${lvl}]<br/>`)
+          L.push(`攻击时间: ${a.start_time} ~ ${a.end_time}<br/>`)
+          L.push(`持续时间: ${a.duration} 秒<br/>`)
+          L.push(`攻击次数: ${a.attack_count}<br/>`)
+          L.push(`攻击域名: ${a.domain || '-'}</p>`)
+        })
+      }
     } else if (key === 'monitoring' && r.servers && r.servers.length) {
       L.push('<h3>服务器监控</h3>')
       ;(r.servers || []).forEach((s, i) => {
@@ -676,7 +766,8 @@ const buildHtml = (data) => {
     } else if (key === 'scripts' && r.scripts && r.scripts.length) {
       L.push('<h3>脚本执行结果</h3>')
       ;(r.scripts || []).forEach((sc, i) => {
-        L.push(`<p><b>${i + 1}. ${sc.name}</b> [${sc.script_type}] 退出码 ${sc.exit_code}<br/>`)
+        const status = sc.exit_code === 0 ? '' : ` <span style="color:#f56c6c;">[失败, 退出码 ${sc.exit_code}]</span>`
+        L.push(`<p><b>${i + 1}. ${sc.name}</b>${status}<br/>`)
         if (sc.stdout) L.push(`<pre>${sc.stdout.replace(/</g, '&lt;')}</pre>`)
         if (sc.stderr) L.push(`<pre>错误: ${sc.stderr.replace(/</g, '&lt;')}</pre>`)
         L.push('</p>')
@@ -757,7 +848,7 @@ const removeReport = (row) => {
 .order-name { font-size: 13px; color: #303133; }
 .order-btns { display: flex; gap: 4px; }
 .card-header { display: flex; align-items: center; gap: 10px; }
-.card-title { font-weight: 600; font-size: 15px; }
+.card-title { font-weight: 600; font-size: 13px; }
 
 .summary { display: flex; gap: 32px; }
 .summary-dlg { margin-bottom: 0; }
@@ -794,4 +885,21 @@ const removeReport = (row) => {
 .script-err { margin: 8px 0 0; padding: 10px 12px; background: #2b0d0d; color: #ffb4b4; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }
 
 .report-tabs :deep(.el-tabs__header) { margin-bottom: 16px; }
+
+.critical-section { margin-bottom: 16px; }
+.critical-title { font-size: 14px; font-weight: 700; color: #f56c6c; margin-bottom: 12px; }
+.critical-card {
+  border: 1px solid #f56c6c; border-left: 4px solid #f56c6c; border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 10px; background: #fef0f0;
+}
+.critical-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.critical-ip { font-weight: 700; font-size: 15px; color: #303133; font-family: 'Courier New', monospace; }
+.critical-country { font-size: 12px; color: #909399; }
+.critical-count { font-size: 13px; color: #f56c6c; font-weight: 600; margin-left: auto; }
+.critical-meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: #606266; margin-bottom: 8px; }
+.critical-suggestion {
+  font-size: 13px; color: #303133; background: #fff; border: 1px solid #e4e7ed;
+  border-radius: 6px; padding: 8px 12px; line-height: 1.6;
+}
+.suggestion-label { font-weight: 600; color: #e6a23c; }
 </style>

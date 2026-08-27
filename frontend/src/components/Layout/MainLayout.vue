@@ -125,6 +125,18 @@
           </el-breadcrumb>
         </div>
         <div class="header-right">
+          <el-tooltip placement="bottom" :disabled="!schedulerJobs.length">
+            <template #content>
+              <div v-for="job in schedulerJobs" :key="job.id" style="padding:2px 0;">
+                <span style="color:#67c23a;">●</span> {{ job.name }}
+                <span v-if="job.next_run" style="color:#909399;margin-left:6px;">下次: {{ job.next_run }}</span>
+              </div>
+            </template>
+            <div class="scheduler-status">
+              <span class="status-dot" :class="schedulerRunning ? 'online' : 'offline'"></span>
+              <span class="status-text">调度器: {{ schedulerJobs.length }}个任务</span>
+            </div>
+          </el-tooltip>
           <el-dropdown @command="handleUserCommand">
             <span class="user-info">
               <el-avatar :size="32" style="background:#409EFF">
@@ -174,10 +186,10 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
-import { auth } from '@/api'
+import { auth, scheduler } from '@/api'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
@@ -185,6 +197,33 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const isCollapse = ref(false)
+
+// ── 调度器状态 ──
+const schedulerRunning = ref(false)
+const schedulerJobs = ref([])
+let schedulerTimer = null
+
+const fetchSchedulerStatus = async () => {
+  try {
+    const res = await scheduler.status()
+    // res 已经是 response.data（经过拦截器），再取 .data 是实际负载
+    const payload = res.data || res
+    schedulerRunning.value = payload.running ?? false
+    schedulerJobs.value = payload.jobs || []
+  } catch {
+    schedulerRunning.value = false
+    schedulerJobs.value = []
+  }
+}
+
+onMounted(() => {
+  fetchSchedulerStatus()
+  schedulerTimer = setInterval(fetchSchedulerStatus, 30000)
+})
+
+onUnmounted(() => {
+  if (schedulerTimer) clearInterval(schedulerTimer)
+})
 
 // 默认展开的一级菜单（不预展开，访问时才展开）
 const defaultOpeneds = ref([])
@@ -334,6 +373,7 @@ const submitChangePwd = async () => {
   flex-shrink: 0;
 }
 .header-left { display: flex; align-items: center; gap: 12px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
 .collapse-btn { padding: 6px; }
 .user-info {
   display: flex; align-items: center; gap: 8px; cursor: pointer;
@@ -341,6 +381,19 @@ const submitChangePwd = async () => {
   &:hover { background: #f5f5f5; }
 }
 .username { font-size: 14px; color: #333; }
+
+.scheduler-status {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 6px; cursor: default;
+  font-size: 13px; color: #606266;
+  &:hover { background: #f5f5f5; }
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  &.online { background: #67c23a; box-shadow: 0 0 4px #67c23a80; }
+  &.offline { background: #f56c6c; box-shadow: 0 0 4px #f56c6c80; }
+}
+.status-text { white-space: nowrap; }
 
 .layout-main {
   background: #f0f2f5;

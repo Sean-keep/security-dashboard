@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.core.config import settings
+from app.utils.timezone import now_cst
 from app.models.base import init_db
 from app.api import auth, addresses, rules, alerts, settings as settings_api
 from app.api.inspect import router as inspect_router
@@ -162,18 +163,52 @@ async def health():
 
 @app.get("/api/scheduler/status")
 async def scheduler_status():
-    """调度器状态检查（如果停止则自动重启）"""
+    """调度器状态检查 — 基于数据库最近执行记录"""
+    import subprocess
+    from app.models.base import SessionLocal
+    from app.models.rule import Rule
+    from app.models.execution_log import RuleExecutionLog
+    from app.schemas.common import Response
+
+    # 检查独立调度器进程是否运行
     try:
-        from app.services.scheduler_service import scheduler_service
-        
-        # 调度器由独立进程运行，这里只查询状态
-        jobs = scheduler_service.scheduler.get_jobs()
-        return {
-            "running": scheduler_service.scheduler.running,
-            "jobs": [{"id": j.id, "name": j.name, "next_run": str(j.next_run_time)} for j in jobs]
-        }
-    except Exception as e:
-        return {"error": str(e), "running": False, "jobs": []}
+        result = subprocess.run(
+            ["pgrep", "-f", "run_scheduler.py"],
+            capture_output=True, text=True, timeout=5
+        )
+        scheduler_running = result.returncode == 0
+    except Exception:
+        scheduler_running = False
+
+    db = SessionLocal()
+    try:
+        # 获取所有定时规则
+        rules = db.query(Rule).filter(
+            Rule.is_enabled == True,
+            Rule.schedule_type.in_(['interval', 'cron'])
+        ).all()
+
+        jobs = []
+        for r in rules:
+            # 获取该规则最近一次执行
+            last_log = (
+                db.query(RuleExecutionLog)
+                .filter(RuleExecutionLog.rule_id == r.id)
+                .order_by(RuleExecutionLog.executed_at.desc())
+                .first()
+            )
+            jobs.append({
+                "id": f"rule_{r.id}",
+                "name": r.name,
+                "next_run": str(r.next_run) if r.next_run else None,
+                "last_run": str(last_log.executed_at) if last_log else None,
+                "last_status": last_log.status if last_log else None,
+                "schedule": f"{r.schedule_type}: {r.schedule_value}",
+            })
+
+        return Response(data={"running": scheduler_running, "jobs": jobs})
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

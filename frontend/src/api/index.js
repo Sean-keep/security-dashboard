@@ -115,6 +115,11 @@ export const executionLogs = {
   get: (id) => request.get(`/execution-logs/${id}`),
 }
 
+// ── 调度器 ──
+export const scheduler = {
+  status: () => request.get('/scheduler/status'),
+}
+
 // ── 首页概览 ──
 export const getDashboardStats = () => Promise.all([
   request.get('/addresses', { params: { page_size: 1 } }),

@@ -72,6 +72,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="attack_count" label="攻击次数" width="120" align="center" sortable="custom" />
+        <el-table-column prop="severity" label="威胁等级" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="severityTag(row.severity)" size="small" effect="plain">
+              {{ { critical: '严重', high: '高危', medium: '中危', low: '低危' }[row.severity] || row.severity }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="入库时间" width="170" sortable="custom" />
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
@@ -122,7 +129,7 @@
         <el-form-item label="持续时间(秒)">
           <el-input-number v-model="form.duration" :min="0" style="width:100%" />
         </el-form-item>
-        <el-form-item label="严重等级">
+        <el-form-item label="威胁等级">
           <el-select v-model="form.severity" style="width:100%">
             <el-option label="低危" value="low" />
             <el-option label="中危" value="medium" />

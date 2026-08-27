@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.models.base import get_db
 from app.models.user import User
 from app.models.address import Address
+from app.models.alert import Alert
 from app.models.script import Script
 from app.models.inspection_report import InspectionReport
 from app.models.ingest_endpoint import IngestEndpoint
@@ -68,8 +69,16 @@ def inspection_report(
             .order_by(Address.attack_count.desc())
             .all()
         )
-        addresses = [
-            {
+        addresses = []
+        for a in addrs:
+            # 查询该 IP 最新告警的处置建议
+            alert = (
+                db.query(Alert)
+                .filter(Alert.src_ip == a.ip_address, Alert.created_at >= day_start, Alert.created_at <= day_end)
+                .order_by(Alert.created_at.desc())
+                .first()
+            )
+            addresses.append({
                 "ip_address": a.ip_address,
                 "country": a.country or "",
                 "domain": a.domain or "",
@@ -77,9 +86,9 @@ def inspection_report(
                 "end_time": format_dt(a.end_time),
                 "duration": a.duration or 0,
                 "attack_count": a.attack_count or 0,
-            }
-            for a in addrs
-        ]
+                "severity": a.severity or "medium",
+                "handle_suggestion": alert.handle_suggestion if alert else "",
+            })
     else:
         addresses = None
 
