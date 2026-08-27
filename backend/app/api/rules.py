@@ -318,35 +318,42 @@ async def update_rule(
     if not rule:
         return Response(code=404, msg="规则不存在")
     
-    update_data = request.model_dump(exclude_unset=True)
-    
-    # Handle JSON fields
-    if "stages" in update_data and update_data["stages"]:
-        update_data["stages"] = json.dumps([s.model_dump() if hasattr(s, "model_dump") else s for s in update_data["stages"]], ensure_ascii=False)
-    if "nodes" in update_data and update_data["nodes"]:
-        update_data["nodes"] = json.dumps([n.model_dump() if hasattr(n, "model_dump") else n for n in update_data["nodes"]], ensure_ascii=False)
-    if "output_mapping" in update_data and update_data["output_mapping"]:
-        update_data["output_mapping"] = json.dumps({k: v.model_dump() if hasattr(v, "model_dump") else v for k, v in update_data["output_mapping"].items()}, ensure_ascii=False)
-    if "actions" in update_data and update_data["actions"]:
-        # 注入危险等级 - 深度转换 Pydantic 模型为 dict
-        raw_actions = update_data["actions"]
+    # 直接从 request 对象获取原始数据，避免 Pydantic 转换问题
+    update_data = {}
+
+    # 只更新有值的字段
+    if request.name is not None:
+        update_data["name"] = request.name
+    if request.description is not None:
+        update_data["description"] = request.description
+    if request.es_index is not None:
+        update_data["es_index"] = request.es_index
+    if request.schedule_type is not None:
+        update_data["schedule_type"] = request.schedule_type
+    if request.schedule_value is not None:
+        update_data["schedule_value"] = request.schedule_value
+    if request.is_enabled is not None:
+        update_data["is_enabled"] = request.is_enabled
+
+    # 处理 JSON 字段 - 直接序列化为字符串
+    if request.stages is not None:
+        stages_list = [s.model_dump() if hasattr(s, "model_dump") else s for s in request.stages]
+        update_data["stages"] = json.dumps(stages_list, ensure_ascii=False)
+    if request.nodes is not None:
+        nodes_list = [n.model_dump() if hasattr(n, "model_dump") else n for n in request.nodes]
+        update_data["nodes"] = json.dumps(nodes_list, ensure_ascii=False)
+    if request.output_mapping is not None:
+        mapping_dict = {k: v.model_dump() if hasattr(v, "model_dump") else v for k, v in request.output_mapping.items()}
+        update_data["output_mapping"] = json.dumps(mapping_dict, ensure_ascii=False)
+    if request.actions is not None:
+        # 注入危险等级
         actions_list = []
-        for a in raw_actions:
+        for a in request.actions:
             if hasattr(a, "model_dump"):
-                a = a.model_dump()
-            elif hasattr(a, "dict"):
-                a = a.dict()
+                a_dict = a.model_dump()
             else:
-                a = dict(a)
-            # 深度转换嵌套对象
-            for key, val in a.items():
-                if isinstance(val, list):
-                    a[key] = [dict(item) if hasattr(item, "model_dump") else (dict(item) if hasattr(item, "dict") else item) for item in val]
-                elif hasattr(val, "model_dump"):
-                    a[key] = val.model_dump()
-                elif hasattr(val, "dict"):
-                    a[key] = val.dict()
-            actions_list.append(a)
+                a_dict = dict(a)
+            actions_list.append(a_dict)
         update_data["actions"] = json.dumps(
             _inject_severity(actions_list, request.severity or "medium"),
             ensure_ascii=False

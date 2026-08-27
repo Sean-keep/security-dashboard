@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import text as sa_text
 from app.models.address import Address
 from app.models.alert import Alert
@@ -285,10 +285,13 @@ class RuleExecutor:
             if not country and ip:
                 country = _country_cache.get(ip, "")
 
-            # Upsert: 存在则累加 attack_count + 更新时间，不存在则插入
+            # Upsert: 同一天内存在则累加 attack_count + 更新时间，不存在则插入
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = today_start + timedelta(days=1)
             existing = self.db_session.query(Address).filter(
                 Address.ip_address == ip,
-                (Address.domain == domain_val) | (Address.domain.is_(None) & (domain_val == None))
+                Address.created_at >= today_start,
+                Address.created_at < today_end
             ).first()
 
             # Evaluate severity based on conditions if available
