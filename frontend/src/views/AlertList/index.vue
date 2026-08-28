@@ -102,7 +102,7 @@
     </el-card>
 
     <!-- 详情弹窗 -->
-    <el-dialog v-model="detailVisible" title="告警详情" width="700px" destroy-on-close>
+    <el-dialog v-model="detailVisible" title="告警详情" width="800px" destroy-on-close>
       <el-descriptions :column="2" border v-if="detailData.id" :label-style="{ width: '110px', whiteSpace: 'nowrap', wordBreak: 'keep-all' }" :content-style="{ minWidth: '150px' }">
         <el-descriptions-item label="严重等级">
           <el-tag :type="severityTag(detailData.severity)">{{ detailData.severity }}</el-tag>
@@ -148,7 +148,7 @@
                   <span class="raw-log-ip">{{ log.src_ip || log.remote_addr || '-' }}</span>
                 </div>
                 <div class="raw-log-detail">
-                  <span>{{ log.request_method || 'GET' }} {{ log.request_uri || '/' }}</span>
+                  <span style="overflow:hidden;text-overflow:ellipsis;max-width:100%;">{{ log.request_method || 'GET' }} {{ log.request_uri || '/' }}</span>
                   <span v-if="log.server_name" class="raw-log-domain">{{ log.server_name }}</span>
                   <span v-if="log.bytes" class="raw-log-bytes">{{ log.bytes }}B</span>
                 </div>
@@ -359,7 +359,7 @@ onMounted(loadData)
 .raw-log-header { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
 .raw-log-time { font-size:11px; color:#909399; font-family:monospace; }
 .raw-log-ip { font-size:12px; color:#409EFF; font-family:monospace; }
-.raw-log-detail { font-size:12px; color:#606266; display:flex; gap:12px; flex-wrap:wrap; }
+.raw-log-detail { font-size:12px; color:#606266; display:flex; gap:12px; flex-wrap:wrap; overflow:hidden; max-width:100%; }
 .raw-log-domain { color:#E6A23C; }
 .raw-log-bytes { color:#67C23A; }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; }
