@@ -128,7 +128,9 @@
           />
         </el-descriptions-item>
         <el-descriptions-item label="原始日志" :span="2">
-          <pre class="raw-log">{{ detailData.raw_log }}</pre>
+          <div style="max-width:100%;overflow:hidden;">
+            <pre class="raw-log">{{ detailData.raw_log }}</pre>
+          </div>
         </el-descriptions-item>
       </el-descriptions>
 
@@ -348,7 +350,9 @@ onMounted(loadData)
 .raw-log {
   background:#f5f5f5; padding:10px; border-radius:6px;
   font-size:12px; max-height:200px; overflow:auto;
-  white-space:pre-wrap; word-break:break-all; margin:0;
+  white-space:pre-wrap; word-break:break-word; margin:0;
+  max-width:100%; box-sizing:border-box;
+  overflow-x:auto;
 }
 .raw-logs-container { max-height:400px; overflow:auto; }
 .raw-log-entry { padding:8px; margin-bottom:6px; background:#f8f9fa; border-radius:4px; border-left:3px solid #409EFF; }
@@ -368,5 +372,12 @@ onMounted(loadData)
   min-width: 110px !important;
   white-space: nowrap !important;
   word-break: keep-all !important;
+}
+.el-dialog .el-descriptions__content {
+  overflow: hidden;
+  max-width: 100%;
+}
+.el-dialog .el-descriptions__cell {
+  overflow: hidden;
 }
 </style>
