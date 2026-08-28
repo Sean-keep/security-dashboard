@@ -350,9 +350,9 @@ onMounted(loadData)
 .raw-log {
   background:#f5f5f5; padding:10px; border-radius:6px;
   font-size:12px; max-height:200px; overflow:auto;
-  white-space:pre-wrap; word-break:break-word; margin:0;
+  white-space:pre-wrap; word-break:break-all; margin:0;
   max-width:100%; box-sizing:border-box;
-  overflow-x:auto;
+  overflow-x:auto; display:block; width:100%;
 }
 .raw-logs-container { max-height:400px; overflow:auto; }
 .raw-log-entry { padding:8px; margin-bottom:6px; background:#f8f9fa; border-radius:4px; border-left:3px solid #409EFF; }
@@ -374,10 +374,19 @@ onMounted(loadData)
   word-break: keep-all !important;
 }
 .el-dialog .el-descriptions__content {
-  overflow: hidden;
-  max-width: 100%;
+  overflow: hidden !important;
+  max-width: 100% !important;
+  word-break: break-all !important;
 }
 .el-dialog .el-descriptions__cell {
-  overflow: hidden;
+  overflow: hidden !important;
+  max-width: 0 !important;
+}
+.el-dialog {
+  max-width: 90vw !important;
+}
+.el-dialog__body {
+  overflow: auto !important;
+  max-width: 100% !important;
 }
 </style>
