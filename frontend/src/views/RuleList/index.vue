@@ -42,7 +42,37 @@
           </template>
         </el-table-column>
         <el-table-column prop="schedule_value" label="调度值" width="130" show-overflow-tooltip />
-        <el-table-column prop="run_count" label="执行次数" width="90" align="center" />
+        <el-table-column label="告警趋势" width="150" align="center">
+          <template #default="{ row }">
+            <el-tooltip placement="top" :show-after="100">
+              <template #content>
+                <div class="trend-tooltip">
+                  <div v-for="item in row.alert_trend" :key="item.date" class="trend-item">
+                    <span>{{ item.date }}</span>
+                    <span class="count">{{ item.count }} 条</span>
+                  </div>
+                </div>
+              </template>
+              <svg class="trend-chart" viewBox="0 0 100 40" preserveAspectRatio="none">
+                <path
+                  v-if="row.alert_trend?.length"
+                  :d="getTrendPath(row.alert_trend)"
+                  fill="none"
+                  stroke="#409eff"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path
+                  v-if="row.alert_trend?.length"
+                  :d="getTrendArea(row.alert_trend)"
+                  fill="#409eff"
+                  fill-opacity="0.1"
+                />
+              </svg>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="last_run" label="上次执行" width="160" />
         <el-table-column prop="is_enabled" label="状态" width="80" align="center">
           <template #default="{ row }">
@@ -154,22 +184,10 @@
             <!-- 过滤条件 -->
             <el-form-item label="过滤条件">
               <div class="filters-area">
-                <div v-for="(filter, filterIdx) in stage.filters" :key="filterIdx" class="filter-row">
-                  <el-select v-model="filter.field" placeholder="字段" filterable style="width:180px">
-                    <el-option v-for="(type, f) in getStageFields(stage)" :key="f" :label="f" :value="f" />
-                  </el-select>
-                  <el-select v-model="filter.operator" style="width:120px">
-                    <el-option label="等于" value="equals" />
-                    <el-option label="不等于" value="not_equals" />
-                    <el-option label="包含" value="contains" />
-                    <el-option label="大于" value="gt" />
-                    <el-option label="小于" value="lt" />
-                    <el-option label="存在" value="exists" />
-                  </el-select>
-                  <el-input v-model="filter.value" placeholder="值" style="width:200px" />
-                  <el-button type="danger" :icon="Delete" circle size="small" @click="stage.filters.splice(filterIdx, 1)" />
-                </div>
-                <el-button size="small" :icon="Plus" @click="stage.filters.push({field:'', operator:'equals', value:''})">添加条件</el-button>
+                <filter-tree
+                  v-model="stage.filters"
+                  :fields="getStageFields(stage)"
+                />
               </div>
             </el-form-item>
 
@@ -414,6 +432,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { rules, settings, executionLogs } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Loading } from '@element-plus/icons-vue'
+import FilterTree from '@/components/FilterTree.vue'
 
 const tableData = ref([])
 const total = ref(0)
@@ -456,6 +475,30 @@ const ruleFormRules = {
 const dialogTitle = computed(() => isEdit.value ? '编辑规则' : '新建规则')
 
 const scheduleLabel = (s) => ({ once: '手动', interval: '周期', cron: 'Cron' }[s] || s)
+
+// 计算趋势图路径
+const getTrendPath = (trend) => {
+  if (!trend?.length) return ''
+  const max = Math.max(...trend.map(t => t.count), 1)
+  const points = trend.map((t, i) => {
+    const x = (i / (trend.length - 1)) * 100
+    const y = 40 - (t.count / max) * 35
+    return `${x},${y}`
+  })
+  return `M${points.join(' L')}`
+}
+
+// 计算趋势图填充区域
+const getTrendArea = (trend) => {
+  if (!trend?.length) return ''
+  const max = Math.max(...trend.map(t => t.count), 1)
+  const points = trend.map((t, i) => {
+    const x = (i / (trend.length - 1)) * 100
+    const y = 40 - (t.count / max) * 35
+    return `${x},${y}`
+  })
+  return `M0,40 L${points.join(' L')} L100,40 Z`
+}
 
 // 获取阶段索引的字段列表（从缓存或ES加载）
 const getStageFields = (stage) => {
@@ -550,12 +593,24 @@ const backendStageToFrontend = (backendStage) => {
     }
   }
 
+  // 处理过滤条件格式（兼容旧格式数组和新格式树形结构）
+  let filters = { logic: null, filters: [] }
+  if (backendStage.filters) {
+    if (Array.isArray(backendStage.filters)) {
+      // 旧格式：数组，转换为新格式
+      filters = { logic: 'and', filters: backendStage.filters }
+    } else if (typeof backendStage.filters === 'object' && backendStage.filters.logic) {
+      // 新格式：树形结构
+      filters = backendStage.filters
+    }
+  }
+
   return {
     id: backendStage.id || `stage_${Date.now()}`,
     name: backendStage.name || '',
     index: backendStage.index || '',
     timeWindow,
-    filters: Array.isArray(backendStage.filters) ? backendStage.filters : [],
+    filters,
     enableAggregation,
     aggregation,
     enableJoin,
@@ -571,7 +626,7 @@ const addStage = () => {
     name: '',
     index: '',
     timeWindow: { value: 3, unit: 'minutes' },
-    filters: [],
+    filters: { logic: null, filters: [] },
     enableAggregation: false,
     aggregation: {
       groupBy: [],
@@ -621,13 +676,51 @@ const previewStage = async (stage, stageIdx) => {
   }
 }
 
+// 清理过滤条件树，移除空条件
+const cleanFilterTree = (node) => {
+  if (!node || !node.logic || !Array.isArray(node.filters)) {
+    return node
+  }
+
+  const cleanedFilters = []
+  for (const filter of node.filters) {
+    // 简单条件（有 field 字段）
+    if (filter.field !== undefined) {
+      // 只保留有字段名的条件
+      if (filter.field) {
+        cleanedFilters.push(filter)
+      }
+    }
+    // 逻辑组（有 logic 字段）
+    else if (filter.logic && Array.isArray(filter.filters)) {
+      const cleanedGroup = cleanFilterTree(filter)
+      // 只保留非空的条件组
+      if (cleanedGroup.filters.length > 0) {
+        cleanedFilters.push(cleanedGroup)
+      }
+    }
+  }
+
+  return {
+    logic: node.logic,
+    filters: cleanedFilters
+  }
+}
+
 // 构建阶段参数（用于提交）
 const buildStageParams = (stage) => {
+  // 处理过滤条件（新格式：树形结构）
+  let filters = stage.filters
+  // 如果是新格式对象，需要清理空的条件
+  if (filters && typeof filters === 'object' && filters.logic) {
+    filters = cleanFilterTree(filters)
+  }
+
   const params = {
     id: stage.id,
     index: stage.index,
     time_window: { [stage.timeWindow.unit]: stage.timeWindow.value },
-    filters: stage.filters.filter(f => f.field),
+    filters: filters,
     aggregation: null,
     join: null
   }
@@ -935,6 +1028,29 @@ onMounted(loadData)
 .filter-bar { margin-bottom: 16px; }
 .rule-name { font-weight: 600; color: #409EFF; }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; }
+
+.trend-chart {
+  width: 100px;
+  height: 30px;
+  cursor: pointer;
+}
+
+.trend-tooltip {
+  min-width: 120px;
+}
+
+.trend-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.trend-item .count {
+  font-weight: 600;
+  color: #409eff;
+}
 
 .rule-dialog :deep(.el-dialog__body) { padding: 12px 24px 8px; max-height: 70vh; overflow-y: auto; }
 

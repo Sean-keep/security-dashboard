@@ -31,12 +31,18 @@ class JoinConfig(BaseModel):
     local_field: str
 
 
+class FilterTree(BaseModel):
+    """Filter tree node supporting AND/OR/NOT logic"""
+    logic: str = Field(default="and", pattern="^(and|or|not)$")
+    filters: List[Any] = Field(default_factory=list)
+
+
 class StageConfig(BaseModel):
     """Stage configuration"""
     id: str
     index: str
     time_window: Optional[Dict[str, Any]] = None  # {"value": 30, "unit": "minutes"} 或兼容旧的 {"minutes": 3}
-    filters: List[FilterNode] = Field(default_factory=list)
+    filters: Any = Field(default_factory=list)  # 支持旧格式 List[FilterNode] 或新格式 FilterTree
     aggregation: Optional[AggregationConfig] = None
     join: Optional[JoinConfig] = None
 

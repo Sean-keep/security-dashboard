@@ -5,14 +5,16 @@ import orjson
 from fastapi.responses import JSONResponse
 import json
 import copy
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from pydantic import BaseModel
 
 from app.models.base import get_db
 from app.models.rule import Rule
+from app.models.alert import Alert
 from app.models.user import User
 from app.models.config import SystemConfig
 from app.schemas.rule import RuleCreate, RuleUpdate, RuleResponse
@@ -64,7 +66,7 @@ def _inject_severity(actions: List[Dict], default_severity: str = "medium", seve
     return result
 
 
-def _rule_to_response(rule: Rule) -> Dict[str, Any]:
+def _rule_to_response(rule: Rule, db: Session = None) -> Dict[str, Any]:
     """Convert Rule model to response dict"""
     # Parse JSON fields
     stages = []
@@ -73,7 +75,7 @@ def _rule_to_response(rule: Rule) -> Dict[str, Any]:
             stages = json.loads(rule.stages)
         except:
             pass
-    
+
     nodes = []
     if rule.nodes:
         try:
@@ -84,21 +86,42 @@ def _rule_to_response(rule: Rule) -> Dict[str, Any]:
                 nodes = []
         except:
             pass
-    
+
     output_mapping = {}
     if rule.output_mapping:
         try:
             output_mapping = json.loads(rule.output_mapping)
         except:
             pass
-    
+
     actions = []
     if rule.actions:
         try:
             actions = json.loads(rule.actions)
         except:
             pass
-    
+
+    # 获取该规则的告警趋势（最近7天）
+    alert_trend = []
+    alert_count = 0
+    if db:
+        # 获取最近7天每天的告警数量
+        today = datetime.now().date()
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            day_start = datetime.combine(day, datetime.min.time())
+            day_end = datetime.combine(day + timedelta(days=1), datetime.min.time())
+            count = db.query(Alert).filter(
+                Alert.rule_id == rule.id,
+                Alert.created_at >= day_start,
+                Alert.created_at < day_end
+            ).count()
+            alert_trend.append({
+                "date": day.strftime("%m-%d"),
+                "count": count
+            })
+        alert_count = sum(item["count"] for item in alert_trend)
+
     return {
         "id": rule.id,
         "name": rule.name,
@@ -109,7 +132,8 @@ def _rule_to_response(rule: Rule) -> Dict[str, Any]:
         "is_enabled": rule.is_enabled,
         "last_run": format_dt(rule.last_run),
         "next_run": format_dt(rule.next_run),
-        "run_count": rule.run_count,
+        "alert_count": alert_count,
+        "alert_trend": alert_trend,
         "created_at": format_dt(rule.created_at),
         "stages": stages,
         "output_mapping": output_mapping,
@@ -255,7 +279,7 @@ async def list_rules(
             total=total,
             page=page,
             page_size=page_size,
-            list=[_rule_to_response(r) for r in rows]
+            list=[_rule_to_response(r, db) for r in rows]
         )
     )
 
@@ -289,7 +313,7 @@ async def create_rule(
     
     # TODO: Add to scheduler if interval/cron
     
-    return Response(msg="规则创建成功", data=_rule_to_response(rule))
+    return Response(msg="规则创建成功", data=_rule_to_response(rule, db))
 
 
 @router.get("/{rule_id}", response_model=Response[Dict[str, Any]])
@@ -303,7 +327,7 @@ async def get_rule(
     if not rule:
         return Response(code=404, msg="规则不存在")
     
-    return Response(data=_rule_to_response(rule))
+    return Response(data=_rule_to_response(rule, db))
 
 
 @router.put("/{rule_id}", response_model=Response[Dict[str, Any]])
@@ -367,7 +391,7 @@ async def update_rule(
     
     # TODO: Update scheduler
     
-    return Response(msg="规则更新成功", data=_rule_to_response(rule))
+    return Response(msg="规则更新成功", data=_rule_to_response(rule, db))
 
 
 @router.delete("/{rule_id}", response_model=Response)
