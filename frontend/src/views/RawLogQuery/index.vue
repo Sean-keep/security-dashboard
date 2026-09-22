@@ -223,8 +223,6 @@ const loadColPrefs = () => {
 }
 
 // ── 方法/URL 解析 ──
-const parseMethod = (req) => { if (!req) return '-'; return req.split(' ')[0] || '-' }
-const parseUri = (req) => { if (!req) return '-'; const parts = req.split(' '); return parts[1] || parts[0] || '-' }
 const levelTag = (level) => {
   if (!level) return 'info'
   const l = level.toLowerCase()

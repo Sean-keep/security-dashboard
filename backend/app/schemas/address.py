@@ -3,7 +3,7 @@ Address Schemas
 """
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from app.utils.timezone import format_dt
 
@@ -53,8 +53,7 @@ class AddressResponse(BaseModel):
     remark: str
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @field_serializer('created_at', 'start_time', 'end_time')
     def serialize_dt(self, dt: Optional[datetime], _info):

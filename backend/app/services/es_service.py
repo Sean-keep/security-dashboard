@@ -4,7 +4,8 @@ Elasticsearch Service - Async + Health Check + Error Transparency
 import re
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from threading import Lock
 from elasticsearch import Elasticsearch, NotFoundError, ConnectionError, AuthenticationException
 from pydantic import BaseModel
 
@@ -486,7 +487,8 @@ class ESService:
         if not time_window:
             return []
 
-        now = datetime.utcnow()
+        # ES stores UTC — build the window in naive UTC so isoformat()+'Z' is correct.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # New frontend format: {"value": 30, "unit": "minutes"}
         if "value" in time_window and "unit" in time_window:
@@ -879,3 +881,42 @@ class ESService:
             except Exception:
                 pass
             self._client = None
+
+
+# ---------------------------------------------------------------------------
+# Process-level client cache.
+#
+# Building an Elasticsearch() per request throws away the connection pool and
+# makes _field_type_cache useless (a fresh instance never hits it). Keyed by
+# the connection settings so a config change gets a new client.
+# ---------------------------------------------------------------------------
+_SERVICE_CACHE: Dict[tuple, ESService] = {}
+_SERVICE_CACHE_LOCK = Lock()
+_SERVICE_CACHE_MAX = 8
+
+
+def get_es_service(config: ESConfig) -> ESService:
+    """Return a shared ESService for ``config`` (cached per process)."""
+    key = (
+        config.host, config.port, config.scheme,
+        config.user, config.password, config.verify_certs, config.default_index,
+    )
+    with _SERVICE_CACHE_LOCK:
+        svc = _SERVICE_CACHE.get(key)
+        if svc is not None:
+            return svc
+        # Bound the cache: config churn (or probing many hosts) must not leak
+        # clients forever. Evict the oldest insertion.
+        while len(_SERVICE_CACHE) >= _SERVICE_CACHE_MAX:
+            _SERVICE_CACHE.pop(next(iter(_SERVICE_CACHE)))
+        svc = ESService(config=config)
+        _SERVICE_CACHE[key] = svc
+        return svc
+
+
+def clear_es_service_cache() -> None:
+    """Drop every cached client (used by tests and config reloads)."""
+    with _SERVICE_CACHE_LOCK:
+        for svc in list(_SERVICE_CACHE.values()):
+            svc.close()
+        _SERVICE_CACHE.clear()

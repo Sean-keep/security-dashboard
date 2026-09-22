@@ -1,26 +1,59 @@
-FROM python:3.11-slim
+# Production image. Same hardened shape as ./Dockerfile — kept as a separate
+# name for CI pipelines that build `Dockerfile.prod` explicitly. If you change
+# one, change the other.
+#
+# Deliberately NOT `uvicorn --workers 4`: the ingest rate limiter and the
+# scheduler heartbeat are in-process state. Multiple workers would split both.
+# Scale with `docker compose up --scale` / replicas instead, or put the limiter
+# in Redis first.
+
+# Stage 1: builder — install deps into a venv. Toolchain is only needed here.
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Install system dependencies
+# Compilers / MySQL client headers stay in the builder only.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     default-libmysqlclient-dev \
     pkg-config \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
+# Stage 2: runtime — slim image, no compilers.
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
 COPY . .
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data
+RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app /app/data
 
-# Expose port
+USER appuser
+WORKDIR /app
+
 EXPOSE 5000
 
-# Run with Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000", "--workers", "4"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
+    CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"
+
+CMD ["/app/start.sh"]

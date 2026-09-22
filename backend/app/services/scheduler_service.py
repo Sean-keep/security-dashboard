@@ -3,7 +3,9 @@
 从原版 Flask 迁移：去除 Flask app context，改用 SQLAlchemy session + v2 es_service
 """
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from app.utils.timezone import local_now
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -49,7 +51,7 @@ def _store_raw_logs_for_alerts(db, es, stages, rule_id):
         from datetime import datetime, timedelta
         recent_alerts = db.query(Alert).filter(
             Alert.rule_id == rule_id,
-            Alert.created_at >= datetime.now() - timedelta(minutes=1),
+            Alert.created_at >= local_now() - timedelta(minutes=1),
             Alert.src_ip != ""
         ).all()
 
@@ -99,13 +101,42 @@ class SchedulerService:
         """启动调度器"""
         if not self._scheduler.running:
             self._scheduler.start()
-            print(f"[Scheduler] Started at {datetime.now()}")
+            self.write_heartbeat()
+            print(f"[Scheduler] Started at {local_now()}")
 
     def stop(self):
         """停止调度器"""
         if self._scheduler.running:
             self._scheduler.shutdown()
-            print(f"[Scheduler] Stopped at {datetime.now()}")
+            print(f"[Scheduler] Stopped at {local_now()}")
+
+    @staticmethod
+    def write_heartbeat() -> None:
+        """Stamp ``scheduler_heartbeat`` in SystemConfig.
+
+        ``/api/scheduler/status`` reads this instead of shelling out to
+        ``pgrep`` (which leaked process info to callers and N+1'd the DB).
+        A heartbeat older than 5 minutes means the scheduler is down.
+        """
+        db = SessionLocal()
+        try:
+            row = db.query(SystemConfig).filter(SystemConfig.key == "scheduler_heartbeat").first()
+            stamp = local_now().isoformat(timespec="seconds")
+            if row is None:
+                row = SystemConfig(key="scheduler_heartbeat", value=stamp)
+                db.add(row)
+            else:
+                row.value = stamp
+                row.updated_at = local_now()
+            db.commit()
+        except Exception as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            print(f"[Scheduler] Failed to write heartbeat: {exc}")
+        finally:
+            db.close()
 
     def add_rule_job(self, rule):
         """添加规则调度任务"""
@@ -199,7 +230,7 @@ class SchedulerService:
                         _store_raw_logs_for_alerts(db, es, stages, rule_obj.id)
 
                     # 更新规则状态
-                    rule_obj.last_run = datetime.now()
+                    rule_obj.last_run = local_now()
                     rule_obj.run_count = (rule_obj.run_count or 0) + 1
                     db.commit()
 

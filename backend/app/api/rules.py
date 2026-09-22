@@ -21,7 +21,7 @@ from app.schemas.rule import RuleCreate, RuleUpdate, RuleResponse
 from app.schemas.common import Response, PaginatedResponse, PaginatedData
 from app.api.security import get_current_user
 from app.services.es_service import ESService, ESConfig
-from app.utils.timezone import format_dt
+from app.utils.timezone import format_dt, local_now
 
 router = APIRouter(prefix="/rules", tags=["Rules"])
 
@@ -66,8 +66,37 @@ def _inject_severity(actions: List[Dict], default_severity: str = "medium", seve
     return result
 
 
-def _rule_to_response(rule: Rule, db: Session = None) -> Dict[str, Any]:
-    """Convert Rule model to response dict"""
+def _alert_trend_for_rules(db: Session, rule_ids) -> Dict[int, Dict[str, int]]:
+    """Daily alert counts for the last 7 days, for many rules in ONE query.
+
+    Returns ``{rule_id: {"YYYY-MM-DD": count}}``. Days with no alerts are
+    absent (callers treat a missing key as 0).
+    """
+    if not rule_ids:
+        return {}
+    today = local_now().date()
+    window_start = datetime.combine(today - timedelta(days=6), datetime.min.time())
+    day_col = func.date(Alert.created_at)
+    rows = (
+        db.query(Alert.rule_id, day_col, func.count(Alert.id))
+        .filter(Alert.rule_id.in_(rule_ids), Alert.created_at >= window_start)
+        .group_by(Alert.rule_id, day_col)
+        .all()
+    )
+    out: Dict[int, Dict[str, int]] = {}
+    for rule_id, day, count in rows:
+        key = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        out.setdefault(rule_id, {})[key] = int(count)
+    return out
+
+
+def _rule_to_response(rule: Rule, db: Session = None, counts_by_day: Dict[str, int] = None) -> Dict[str, Any]:
+    """Convert Rule model to response dict.
+
+    ``counts_by_day`` is the rule's pre-fetched trend (see
+    ``_alert_trend_for_rules``) — pass it when serialising a list so the whole
+    page costs one extra query instead of 7 per rule.
+    """
     # Parse JSON fields
     stages = []
     if rule.stages:
@@ -101,25 +130,17 @@ def _rule_to_response(rule: Rule, db: Session = None) -> Dict[str, Any]:
         except:
             pass
 
-    # 获取该规则的告警趋势（最近7天）
+    # 告警趋势（最近7天）。counts_by_day 可由调用方批量预取，避免 N+1。
     alert_trend = []
     alert_count = 0
-    if db:
-        # 获取最近7天每天的告警数量
-        today = datetime.now().date()
+    if db is not None or counts_by_day is not None:
+        today = local_now().date()
+        if counts_by_day is None:
+            counts_by_day = _alert_trend_for_rules(db, [rule.id]).get(rule.id, {})
         for i in range(6, -1, -1):
             day = today - timedelta(days=i)
-            day_start = datetime.combine(day, datetime.min.time())
-            day_end = datetime.combine(day + timedelta(days=1), datetime.min.time())
-            count = db.query(Alert).filter(
-                Alert.rule_id == rule.id,
-                Alert.created_at >= day_start,
-                Alert.created_at < day_end
-            ).count()
-            alert_trend.append({
-                "date": day.strftime("%m-%d"),
-                "count": count
-            })
+            count = int(counts_by_day.get(day.isoformat(), 0))
+            alert_trend.append({"date": day.strftime("%m-%d"), "count": count})
         alert_count = sum(item["count"] for item in alert_trend)
 
     return {
@@ -273,13 +294,16 @@ async def list_rules(
     
     total = query.count()
     rows = query.order_by(Rule.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
-    
+
+    # One grouped query for every rule's 7-day trend (was 7 queries per rule).
+    trends = _alert_trend_for_rules(db, [r.id for r in rows])
+
     return PaginatedResponse(
         data=PaginatedData(
             total=total,
             page=page,
             page_size=page_size,
-            list=[_rule_to_response(r, db) for r in rows]
+            list=[_rule_to_response(r, db, counts_by_day=trends.get(r.id, {})) for r in rows]
         )
     )
 
@@ -498,7 +522,7 @@ async def execute_rule_endpoint(
             from app.services.scheduler_service import _store_raw_logs_for_alerts
             _store_raw_logs_for_alerts(db, es, stages, rule.id)
 
-        rule.last_run = datetime.now()
+        rule.last_run = local_now()
         rule.run_count = (rule.run_count or 0) + 1
         db.commit()
 

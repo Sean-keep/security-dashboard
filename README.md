@@ -294,6 +294,8 @@ security-dashboard-v2/
 │   │   ├── schemas/      # Pydantic schema
 │   │   └── services/     # 核心服务（ES 查询、规则执行、调度器、巡检）
 │   ├── scripts/          # 初始化脚本
+│   ├── migrations/       # 增量 SQL 迁移（见 docs/migrations.md）
+│   ├── tests/            # pytest 测试套件
 │   ├── Dockerfile
 │   └── .env.example      # 环境变量模板
 ├── frontend/             # Vue 3 前端
@@ -302,10 +304,40 @@ security-dashboard-v2/
 │   │   ├── api/          # API 调用
 │   │   └── router/       # 路由配置
 │   └── Dockerfile
-├── docs/                 # 设计文档
+├── docs/                 # 设计文档、数据库迁移说明
 ├── fixes/                # 修复记录
 └── docker-compose.yml     # 容器编排
 ```
+
+## 测试
+
+后端带一套 pytest 回归，覆盖鉴权、密码策略、脚本执行闸门、ingest 接入令牌与响应码契约：
+
+```bash
+cd backend
+python -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/python -m pytest tests/ -q
+```
+
+测试通过 SQLite 内存库跑，不需要 MySQL / Elasticsearch。`conftest.py` 会设置
+`ALLOW_INSECURE_DEFAULTS=1`、`USE_SQLITE=1` 与占位密钥，**仅供测试**。
+
+前端：
+
+```bash
+cd frontend
+npm install
+npm run lint    # ESLint 10 flat config
+npm run build   # 产物在 dist/
+```
+
+## 数据库迁移
+
+建表用 `Base.metadata.create_all()`，它**只补缺失的表，不会给已有表补列**。
+给模型加字段时请同时在 `backend/migrations/` 放一份幂等 SQL，并在
+**[docs/migrations.md](docs/migrations.md)** 登记。已有迁移：
+
+- `20260922_ingest_endpoint_token.sql` — `ingest_endpoints` 新增推送密钥列并回填
 
 ## 数据源配置
 
@@ -317,12 +349,20 @@ security-dashboard-v2/
 
 ## 初始账号
 
-默认管理员账号（首次启动后请立即修改密码）：
+默认管理员账号（**首次登录后请立即修改密码**）：
 
 | 字段 | 值 |
 |------|-----|
-| 账号 | admin |
-| 密码 | admin123（首次登录后强制修改）|
+| 账号 | `admin` |
+| 密码 | `ChangeMe2026` |
+
+> ⚠️ 系统**不会**强制你在首次登录时改密，需要自行在「系统设置 → 修改密码」里完成。
+>
+> 密码策略（`app/core/policy.py`）：长度至少 8 位、必须同时包含字母和数字，
+> 且拒绝常见弱口令（`admin123`、`12345678`、`changeme` 等）。不满足策略的密码在
+> 创建用户 / 修改密码时会被直接拒绝，并返回具体的中文原因。
+>
+> 只影响**新初始化**的数据库。已有库里的账号和密码哈希不变，不受本次调整影响。
 
 ## 告警规则说明
 

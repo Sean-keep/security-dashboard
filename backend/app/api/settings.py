@@ -2,6 +2,8 @@
 Settings API Endpoints - System Configuration
 """
 from datetime import datetime
+
+from app.utils.timezone import local_now
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -12,6 +14,7 @@ from app.models.user import User
 from app.models.config import SystemConfig
 from app.schemas.common import Response
 from app.api.security import get_current_user, get_current_admin_user, get_password_hash
+from app.core.policy import validate_password_strength
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
@@ -57,8 +60,10 @@ async def create_user(
     current_user: User = Depends(get_current_admin_user)
 ):
     """Create a new user (admin only)"""
-    if len(request.password) < 6:
-        return Response(code=400, msg="密码长度不能少于6位")
+    try:
+        validate_password_strength(request.password)
+    except ValueError as exc:
+        return Response(code=400, msg=str(exc))
     
     if db.query(User).filter(User.username == request.username).first():
         return Response(code=409, msg="用户名已存在")
@@ -96,8 +101,10 @@ async def update_user(
     if request.is_active is not None:
         user.is_active = request.is_active
     if request.password:
-        if len(request.password) < 6:
-            return Response(code=400, msg="密码长度不能少于6位")
+        try:
+            validate_password_strength(request.password)
+        except ValueError as exc:
+            return Response(code=400, msg=str(exc))
         user.password_hash = get_password_hash(request.password)
     
     db.commit()
@@ -167,7 +174,7 @@ async def save_config(
         cfg = db.query(SystemConfig).filter(SystemConfig.key == key).first()
         if cfg:
             cfg.value = str(value)
-            cfg.updated_at = datetime.now()
+            cfg.updated_at = local_now()
             saved += 1
     
     db.commit()

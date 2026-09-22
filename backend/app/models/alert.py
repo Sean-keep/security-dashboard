@@ -3,8 +3,7 @@ Alert Model - Security Alert
 """
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
-from sqlalchemy.dialects.mysql import MEDIUMTEXT
-from app.models.base import Base
+from app.models.base import Base, LongText
 
 
 class Alert(Base):
@@ -31,7 +30,7 @@ class Alert(Base):
     handle_suggestion = Column(Text, default="")
 
     raw_log = Column(Text, default="")  # Raw log summary
-    raw_logs = Column(MEDIUMTEXT, default="")  # ES原始日志JSON数组
+    raw_logs = Column(LongText, default="")  # ES原始日志JSON数组
     
     created_at = Column(DateTime, default=datetime.now, index=True)
     confirmed_at = Column(DateTime, nullable=True)

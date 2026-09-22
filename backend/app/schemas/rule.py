@@ -3,7 +3,7 @@ Rule Schemas
 """
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FilterNode(BaseModel):
@@ -141,5 +141,4 @@ class RuleResponse(BaseModel):
     # 危险等级
     severity: str = "medium"
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

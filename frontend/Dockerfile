@@ -1,5 +1,16 @@
-FROM nginx:1.27
+# Stage 1: build the SPA from source (reproducible — no prebuilt dist/ needed).
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci || npm install
+COPY . .
+RUN npm run build
+
+# Stage 2: serve the built assets with nginx.
+FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY dist /usr/share/nginx/html
+COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
+# busybox wget is available in the nginx:alpine image (curl is not).
+HEALTHCHECK --interval=15s --timeout=5s --retries=5 CMD wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1
 CMD ["nginx", "-g", "daemon off;"]

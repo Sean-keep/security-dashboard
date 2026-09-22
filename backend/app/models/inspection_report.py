@@ -3,8 +3,7 @@ Inspection Report Model - 巡检报告存储
 """
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime
-from sqlalchemy.dialects.mysql import MEDIUMTEXT
-from app.models.base import Base
+from app.models.base import Base, LongText
 
 
 class InspectionReport(Base):
@@ -18,8 +17,8 @@ class InspectionReport(Base):
     script_count = Column(Integer, default=0)
     # 完整报告内容 JSON（存储可预览的摘要；不含 scripts stdout 以控制体积）
     # MEDIUMTEXT ≈ 16MB，足够存储完整报告内容
-    content = Column(MEDIUMTEXT, nullable=False)
+    content = Column(LongText, nullable=False)
     # 原始 scripts stdout 用于导出
-    scripts_json = Column(MEDIUMTEXT, nullable=True)
+    scripts_json = Column(LongText, nullable=True)
     created_by = Column(String(100), default="admin")
     created_at = Column(DateTime, default=datetime.now, index=True)

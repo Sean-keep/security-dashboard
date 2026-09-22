@@ -1,21 +1,20 @@
 """
 Authentication Schemas
 """
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
 from pydantic import BaseModel, Field, field_serializer
 
 from app.utils.timezone import format_dt
 
 
 class LoginRequest(BaseModel):
-    """Login request"""
     username: str = Field(..., min_length=1, max_length=64)
     password: str = Field(..., min_length=1, max_length=128)
 
 
 class UserInfo(BaseModel):
-    """User information in login response"""
     id: int
     username: str
     nickname: str
@@ -23,20 +22,25 @@ class UserInfo(BaseModel):
 
 
 class LoginData(BaseModel):
-    """Login response data"""
+    """Access token + refresh token. The SPA also receives both as HttpOnly cookies."""
     token: str
+    refresh_token: str
     user: UserInfo
 
 
 class LoginResponse(BaseModel):
-    """Login response"""
     code: int = 200
     msg: str = "登录成功"
     data: LoginData
 
 
+class RefreshResponse(BaseModel):
+    code: int = 200
+    msg: str = "刷新成功"
+    data: LoginData
+
+
 class UserResponse(BaseModel):
-    """User response"""
     id: int
     username: str
     nickname: str
@@ -46,8 +50,7 @@ class UserResponse(BaseModel):
     login_count: int = 0
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
     @field_serializer('last_login', 'created_at')
     def serialize_dt(self, dt: Optional[datetime], _info):
@@ -55,6 +58,7 @@ class UserResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    """Change password request"""
     old_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=6)
+    # Length/strength is enforced by app.core.policy.validate_password_strength
+    # so the user gets one specific Chinese message instead of a bare 422.
+    new_password: str = Field(..., min_length=1, max_length=128)

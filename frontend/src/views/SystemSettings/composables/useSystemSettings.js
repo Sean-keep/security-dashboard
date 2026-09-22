@@ -1,0 +1,250 @@
+import { ref, reactive } from 'vue'
+import { settings } from '@/api'
+import { useUserStore } from '@/store/user'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+// ── 用户管理 ──
+const users = ref([])
+const userDialogVisible = ref(false)
+const isUserEdit = ref(false)
+const editUserId = ref(null)
+const userSaveLoading = ref(false)
+const userFormRef = ref()
+const userForm = ref({ username: '', password: '', nickname: '', role: 'operator', is_active: true })
+const userRules = {
+  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }, { min: 6, message: '密码至少6位', trigger: 'blur' }],
+  nickname: [{ required: true, message: '请输入昵称', trigger: 'blur' }],
+  role: [{ required: true, message: '请选择角色', trigger: 'change' }]
+}
+
+const roleLabel = (r) => ({ admin: '管理员', operator: '操作员', viewer: '查看者' }[r] || r)
+
+const loadUsers = async () => {
+  try { users.value = (await settings.users()).data } catch (e) { ElMessage.error('加载用户失败') }
+}
+
+const openUserDialog = (row) => {
+  if (row) {
+    isUserEdit.value = true; editUserId.value = row.id
+    userForm.value = { username: row.username, password: '', nickname: row.nickname, role: row.role, is_active: row.is_active }
+  } else {
+    isUserEdit.value = false; editUserId.value = null
+    userForm.value = { username: '', password: '', nickname: '', role: 'operator', is_active: true }
+  }
+  userDialogVisible.value = true
+}
+
+const submitUser = async () => {
+  try {
+    await userFormRef.value.validate()
+  } catch (_) {
+    return  // 表单验证失败，el-form 自动显示字段错误
+  }
+  userSaveLoading.value = true
+  try {
+    const payload = { ...userForm.value }
+    if (isUserEdit.value) {
+      if (!payload.password) delete payload.password
+      await settings.updateUser(editUserId.value, payload)
+      ElMessage.success('用户更新成功')
+    } else {
+      await settings.createUser(payload)
+      ElMessage.success('用户创建成功')
+    }
+    userDialogVisible.value = false
+    loadUsers()
+  } catch (e) {
+    // axios 拦截器已经 showMessage 了，这里仅作兜底
+    console.error('submitUser error:', e)
+  } finally {
+    userSaveLoading.value = false
+  }
+}
+
+const deleteUser = (row) => {
+  ElMessageBox.confirm(`确定删除用户「${row.username}」？`, '确认', { type: 'warning' })
+    .then(async () => { await settings.deleteUser(row.id); ElMessage.success('删除成功'); loadUsers() })
+    .catch(() => {})
+}
+
+// ── 连接配置 ──
+const esForm = reactive({ es_host: '', es_port: 9200, es_scheme: 'https', es_verify_certs: 'false', es_user: '', es_password: '', es_index: 'security-logs-*' })
+const mysqlForm = reactive({ mysql_host: '', mysql_port: 3306, mysql_user: '', mysql_password: '', mysql_database: '' })
+const grafanaForm = reactive({ grafana_url: '', grafana_auth_mode: 'apikey', grafana_api_key: '', grafana_user: '', grafana_password: '' })
+
+const esSaving = ref(false), esTesting = ref(false), esTestResult = ref(null)
+const mysqlSaving = ref(false), mysqlTesting = ref(false), mysqlTestResult = ref(null)
+const grafanaSaving = ref(false), grafanaTesting = ref(false), grafanaTestResult = ref(null)
+
+// 连接编辑状态（预览 → 编辑模式切换）
+const editingEs = ref(false), editingMysql = ref(false), editingGrafana = ref(false)
+// 缓存原始值（取消时恢复）
+const esBackup = ref({}), mysqlBackup = ref({}), grafanaBackup = ref({})
+
+const startEditEs = () => { esBackup.value = { ...esForm }; editingEs.value = true }
+const cancelEditEs = () => { Object.assign(esForm, esBackup.value); editingEs.value = false }
+const startEditMysql = () => { mysqlBackup.value = { ...mysqlForm }; editingMysql.value = true }
+const cancelEditMysql = () => { Object.assign(mysqlForm, mysqlBackup.value); editingMysql.value = false }
+const startEditGrafana = () => { grafanaBackup.value = { ...grafanaForm }; editingGrafana.value = true }
+const cancelEditGrafana = () => { Object.assign(grafanaForm, grafanaBackup.value); editingGrafana.value = false }
+
+const loadConfig = async () => {
+  try {
+    const res = await settings.getConfig()
+    const groups = res.data || {}
+    const flat = {}
+    Object.values(groups).forEach(arr => arr.forEach(item => { flat[item.key] = item.value }))
+
+    if (flat.es_host !== undefined) esForm.es_host = flat.es_host
+    if (flat.es_port !== undefined) esForm.es_port = parseInt(flat.es_port)
+    if (flat.es_scheme !== undefined) esForm.es_scheme = flat.es_scheme
+    if (flat.es_verify_certs !== undefined) esForm.es_verify_certs = flat.es_verify_certs
+    if (flat.es_user !== undefined) esForm.es_user = flat.es_user
+    if (flat.es_password !== undefined) esForm.es_password = flat.es_password
+    if (flat.es_index !== undefined) esForm.es_index = flat.es_index
+
+    if (flat.mysql_host !== undefined) mysqlForm.mysql_host = flat.mysql_host
+    if (flat.mysql_port !== undefined) mysqlForm.mysql_port = parseInt(flat.mysql_port)
+    if (flat.mysql_user !== undefined) mysqlForm.mysql_user = flat.mysql_user
+    if (flat.mysql_password !== undefined) mysqlForm.mysql_password = flat.mysql_password
+    if (flat.mysql_database !== undefined) mysqlForm.mysql_database = flat.mysql_database
+
+    if (flat.grafana_url !== undefined) grafanaForm.grafana_url = flat.grafana_url
+    if (flat.grafana_auth_mode !== undefined) grafanaForm.grafana_auth_mode = flat.grafana_auth_mode
+    if (flat.grafana_api_key !== undefined) grafanaForm.grafana_api_key = flat.grafana_api_key
+    if (flat.grafana_user !== undefined) grafanaForm.grafana_user = flat.grafana_user
+    if (flat.grafana_password !== undefined) grafanaForm.grafana_password = flat.grafana_password
+
+    if (flat.login_max_attempts !== undefined) securityForm.login_max_attempts = parseInt(flat.login_max_attempts)
+    if (flat.login_lockout_minutes !== undefined) securityForm.login_lockout_minutes = parseInt(flat.login_lockout_minutes)
+  } catch (e) {}
+}
+
+const saveEs = async () => {
+  esSaving.value = true
+  try {
+    await settings.saveConfig({ es_host: esForm.es_host, es_port: String(esForm.es_port), es_scheme: esForm.es_scheme, es_verify_certs: esForm.es_verify_certs, es_user: esForm.es_user, es_password: esForm.es_password, es_index: esForm.es_index })
+    ElMessage.success('ES 配置已保存')
+    editingEs.value = false  // 保存后跳转回预览模式
+  } catch (e) { ElMessage.error('保存失败') }
+  finally { esSaving.value = false }
+}
+const testEs = async () => {
+  esTesting.value = true; esTestResult.value = null
+  try { const r = await settings.testEs(); esTestResult.value = r.data } catch (e) { esTestResult.value = { connected: false, error: e?.response?.data?.msg || '请求失败' } }
+  finally { esTesting.value = false }
+}
+
+const saveMysql = async () => {
+  mysqlSaving.value = true
+  try { await settings.saveConfig({ mysql_host: mysqlForm.mysql_host, mysql_port: String(mysqlForm.mysql_port), mysql_user: mysqlForm.mysql_user, mysql_password: mysqlForm.mysql_password, mysql_database: mysqlForm.mysql_database }); ElMessage.success('MySQL 配置已保存'); editingMysql.value = false }
+  catch (e) { ElMessage.error('保存失败') }
+  finally { mysqlSaving.value = false }
+}
+const testMysql = async () => {
+  mysqlTesting.value = true; mysqlTestResult.value = null
+  try { const r = await settings.testMysql(); mysqlTestResult.value = r.data } catch (e) { mysqlTestResult.value = { connected: false, error: e?.response?.data?.msg || '请求失败' } }
+  finally { mysqlTesting.value = false }
+}
+
+const saveGrafana = async () => {
+  grafanaSaving.value = true
+  try { await settings.saveConfig({ grafana_url: grafanaForm.grafana_url, grafana_auth_mode: grafanaForm.grafana_auth_mode, grafana_api_key: grafanaForm.grafana_api_key, grafana_user: grafanaForm.grafana_user, grafana_password: grafanaForm.grafana_password }); ElMessage.success('Grafana 配置已保存'); editingGrafana.value = false }
+  catch (e) { ElMessage.error('保存失败') }
+  finally { grafanaSaving.value = false }
+}
+const testGrafana = async () => {
+  grafanaTesting.value = true; grafanaTestResult.value = null
+  try { const r = await settings.testGrafana(); grafanaTestResult.value = r.data } catch (e) { grafanaTestResult.value = { connected: false, error: e?.response?.data?.msg || '请求失败' } }
+  finally { grafanaTesting.value = false }
+}
+
+// ── 安全设置 ──
+const securityForm = reactive({ login_max_attempts: 5, login_lockout_minutes: 15 })
+const securitySaving = ref(false)
+const securitySaved = ref(false)
+
+const saveSecurity = async () => {
+  securitySaving.value = true; securitySaved.value = false
+  try {
+    await settings.saveConfig({ login_max_attempts: String(securityForm.login_max_attempts), login_lockout_minutes: String(securityForm.login_lockout_minutes) })
+    securitySaved.value = true
+    setTimeout(() => { securitySaved.value = false }, 2500)
+  } catch (e) { ElMessage.error('保存失败') }
+  finally { securitySaving.value = false }
+}
+
+// ── 日志中心 ──
+const logList = ref([]), logTotal = ref(0), logPage = ref(1), logTypeFilter = ref('')
+const loadLogs = async () => {
+  try {
+    const params = { page: logPage.value }
+    if (logTypeFilter.value) params.log_type = logTypeFilter.value
+    const r = await settings.logs(params)
+    logList.value = r.data.list || r.data.items || []
+    logTotal.value = r.data.total || 0
+  } catch (e) {}
+}
+
+export function useSystemSettings() {
+  const userStore = useUserStore()
+
+  return {
+    userStore,
+    // users
+    users,
+    userDialogVisible,
+    isUserEdit,
+    editUserId,
+    userSaveLoading,
+    userFormRef,
+    userForm,
+    userRules,
+    roleLabel,
+    loadUsers,
+    openUserDialog,
+    submitUser,
+    deleteUser,
+    // connection
+    esForm,
+    mysqlForm,
+    grafanaForm,
+    esSaving,
+    esTesting,
+    esTestResult,
+    mysqlSaving,
+    mysqlTesting,
+    mysqlTestResult,
+    grafanaSaving,
+    grafanaTesting,
+    grafanaTestResult,
+    editingEs,
+    editingMysql,
+    editingGrafana,
+    startEditEs,
+    cancelEditEs,
+    startEditMysql,
+    cancelEditMysql,
+    startEditGrafana,
+    cancelEditGrafana,
+    loadConfig,
+    saveEs,
+    testEs,
+    saveMysql,
+    testMysql,
+    saveGrafana,
+    testGrafana,
+    // security
+    securityForm,
+    securitySaving,
+    securitySaved,
+    saveSecurity,
+    // logs
+    logList,
+    logTotal,
+    logPage,
+    logTypeFilter,
+    loadLogs
+  }
+}

@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { getToken } from '@/api/token'
 import Login from '@/views/Login/index.vue'
 import MainLayout from '@/components/Layout/MainLayout.vue'
 import Dashboard from '@/views/Dashboard/index.vue'
@@ -56,9 +57,20 @@ router.beforeEach((to, from, next) => {
     const target = INSPECTION_TAB_MAP[to.query.tab]
     if (target) return next(`/inspection/${target}`)
   }
-  // auth 守卫：未登录不得进入业务页面（避免 401 循环）
-  if (to.path !== '/login' && !localStorage.getItem('token')) {
-    return next('/login')
+  // auth 守卫：/login 始终放行；其余路由 best-effort 检查（HttpOnly cookie 无法同步读取，
+  // 真正的鉴权由 401 拦截器 + 静默刷新兜底）。无内存 token 且无缓存 userInfo 时视为未登录。
+  if (to.path !== '/login') {
+    const hasToken = !!getToken()
+    let hasUserInfo = false
+    try {
+      const cached = JSON.parse(localStorage.getItem('userInfo') || '{}')
+      hasUserInfo = !!(cached && (cached.id || cached.username || (cached.user && cached.user.id)))
+    } catch {
+      /* treat as no cached user */
+    }
+    if (!hasToken && !hasUserInfo) {
+      return next('/login')
+    }
   }
   next()
 })

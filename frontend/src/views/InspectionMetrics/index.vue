@@ -135,7 +135,7 @@
 import { ref, computed, onMounted, reactive, nextTick } from 'vue'
 import { inspectApi } from '@/api'
 import { useUserStore } from '@/store/user'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Monitor } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 
@@ -151,9 +151,6 @@ const timePreset = ref('1h')
 
 // ECharts chart instances
 const chartInstances = {}
-const trendDialogVisible = ref(false)
-const trendMetric = ref(null)
-const trendChartRef = ref(null)
 
 // Grafana panel embedding
 const grafanaUrl = computed(() => metrics.value?.grafana_url || '')
@@ -194,31 +191,6 @@ const peakType = (v) => {
   if (v >= 90) return 'danger'
   if (v >= 70) return 'warning'
   return 'success'
-}
-const cpuColor  = (v) => (v >= 90 ? '#f56c6c' : v >= 70 ? '#e6a23c' : '#67c23a')
-const memColor  = (v) => (v >= 90 ? '#f56c6c' : v >= 80 ? '#e6a23c' : '#67c23a')
-const diskColor = (v) => (v >= 95 ? '#f56c6c' : v >= 85 ? '#e6a23c' : '#67c23a')
-
-// 打开趋势图弹窗
-const openTrendDialog = (row) => {
-  trendMetric.value = row
-  trendDialogVisible.value = true
-  nextTick(() => {
-    if (trendChartRef.value && row.series_data?.length) {
-      const chart = echarts.init(trendChartRef.value)
-      chart.setOption({
-        title: { text: row.name, textStyle: { fontSize: 14 } },
-        tooltip: { trigger: 'axis' },
-        grid: { top: 40, bottom: 30, left: 50, right: 20 },
-        xAxis: { type: 'time' },
-        yAxis: { type: 'value', name: row.unit || '' },
-        series: [{
-          data: row.series_data.map(p => [p.timestamp * 1000, p.value]),
-          type: 'line', smooth: true, symbol: 'none'
-        }]
-      })
-    }
-  })
 }
 
 const loadMetrics = async () => {
@@ -292,46 +264,6 @@ const saveAlias = async (instance) => {
     ElMessage.error('保存别名失败: ' + (e.message || '未知错误'))
     console.error('[saveAlias failed]', e)
   }
-}
-
-// ── 自定义指标 ──
-const openMetricDialog = (row) => {
-  metricEditId.value = row ? row.id : null
-  metricForm.value = row
-    ? { name: row.name, description: row.description, promql: row.promql, unit: row.unit || '' }
-    : { name: '', description: '', promql: '', unit: '' }
-  metricDialogVisible.value = true
-}
-
-const submitMetric = async () => {
-  try { await metricFormRef.value.validate() } catch (_) { return }
-  metricSaving.value = true
-  try {
-    if (metricEditId.value) {
-      await inspectApi.updateCustomMetric(metricEditId.value, { ...metricForm.value })
-      ElMessage.success('监控更新成功')
-    } else {
-      await inspectApi.createCustomMetric({ ...metricForm.value })
-      ElMessage.success('监控创建成功')
-    }
-    metricDialogVisible.value = false
-    loadMetrics()
-  } catch (e) {
-    console.error(e)
-  } finally {
-    metricSaving.value = false
-  }
-}
-
-const deleteMetric = (row) => {
-  ElMessageBox.confirm(`确定删除监控「${row.name}」？`, '确认', { type: 'warning' })
-    .then(async () => {
-      try {
-        await inspectApi.deleteCustomMetric(row.id)
-        ElMessage.success('删除成功')
-        loadMetrics()
-      } catch (e) { console.error(e) }
-    }).catch(() => {})
 }
 
 onMounted(loadMetrics)

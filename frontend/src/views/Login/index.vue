@@ -82,19 +82,21 @@ const handleLogin = async () => {
         username: loginForm.username,
         password: loginForm.password
       })
-      const token = res.data?.token
-      const user = res.data?.user
-      if (token) {
-        userStore.setAuth(token, user)
+      // 统一响应体 {code:200, data:{token, refresh_token, user}}；cookie 已由后端写入
+      const { token, refresh_token: refreshToken, user } = res.data || {}
+      if (user) {
+        userStore.setAuth(token || '', refreshToken, user)
         router.push('/dashboard')
       } else {
-        throw new Error('登录失败：未获取到 token')
+        throw new Error('登录失败：未获取到用户信息')
       }
     } catch (err) {
       console.error('[login error]', err)
-      const msg = err.response?.data?.msg || err.message || '登录失败'
-      // Element Plus 已全局注册，ElMessage 可直接使用
-      import('element-plus').then(({ ElMessage }) => ElMessage.error(msg))
+      // 拦截器已对 HTTP 业务错误弹窗（含 429 的 detail）；这里只兜底非 HTTP 错误
+      if (!err.response) {
+        const msg = err.message || '登录失败'
+        import('element-plus').then(({ ElMessage }) => ElMessage.error(msg))
+      }
     } finally {
       loading.value = false
     }

@@ -4,7 +4,7 @@ Alerts API Endpoints - Security Alert Management
 from datetime import datetime, timedelta
 from typing import List
 
-from app.utils.timezone import now_cst
+from app.utils.timezone import local_now, now_cst
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -162,9 +162,9 @@ async def update_alert(
     if request.status:
         alert.status = request.status
         if request.status == "confirmed":
-            alert.confirmed_at = datetime.now()
+            alert.confirmed_at = local_now()
         elif request.status == "resolved":
-            alert.resolved_at = datetime.now()
+            alert.resolved_at = local_now()
     
     if request.severity:
         alert.severity = request.severity

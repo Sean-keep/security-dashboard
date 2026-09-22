@@ -1,8 +1,7 @@
-from datetime import datetime
-
-from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy import Column, DateTime, Integer, String, Text
 
 from app.models.base import Base
+from app.utils.timezone import local_now
 
 
 class IngestEndpoint(Base):
@@ -13,5 +12,8 @@ class IngestEndpoint(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(64), unique=True, index=True, nullable=False, comment='接口名称（URL 路径段，唯一）')
     description = Column(Text, nullable=True, comment='接口说明')
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # Shared secret presented by the source as X-Ingest-Token. create_all() adds
+    # the column on bootstrap; live upgrades need the migration in docs/.
+    token = Column(String(64), nullable=True, index=True, comment='推送密钥（X-Ingest-Token）')
+    created_at = Column(DateTime, default=local_now)
+    updated_at = Column(DateTime, default=local_now, onupdate=local_now)

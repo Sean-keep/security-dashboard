@@ -4,6 +4,8 @@
 export const auth = {
   login: (data) => request.post('/auth/login', data),
   me: () => request.get('/auth/me'),
+  refresh: () => request.post('/auth/refresh'),
+  logout: () => request.post('/auth/logout'),
   changePassword: (data) => request.post('/auth/change-password', data)
 }
 
@@ -100,7 +102,7 @@ export const reports = {
   saveSummaryTemplate: (template, config) => request.put('/reports/summary-template', { template, config }),
 }
 
-// 宸℃鎶ュ憡绠＄悊
+// 巡检报告管理
 export const reportMgmt = {
   list: (params) => request.get('/reports', { params }),
   get: (id) => request.get(`/reports/${id}`),
@@ -137,6 +139,7 @@ export const remoteApi = {
   createEndpoint: (name, description) => request.post('/remote/endpoints', { name, description }),
   updateEndpoint: (id, name, description) => request.put(`/remote/endpoints/${id}`, { name, description }),
   deleteEndpoint: (id) => request.delete(`/remote/endpoints/${id}`),
+  rotateToken: (id) => request.post(`/remote/endpoints/${id}/rotate-token`),
   listLogs: (id, params) => request.get(`/remote/endpoints/${id}/logs`, { params }),
   clearLogs: (id) => request.delete(`/remote/endpoints/${id}/logs`),
   deleteLog: (id) => request.delete(`/remote/logs/${id}`),

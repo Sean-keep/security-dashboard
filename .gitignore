@@ -7,6 +7,9 @@ dist/
 build/
 .eggs/
 *.egg
+.venv/
+.venv*/
+venv/
 
 # Node
 node_modules/
@@ -15,10 +18,16 @@ dist/
 .eslintcache
 
 # Environment & Secrets
+# .env.example is the committed template — keep it out of this rule.
 .env
 .env.*
+!.env.example
 *.pem
 *.key
+
+# Runtime data (SQLite file, scheduler log) — never commit
+backend/app/data/
+backend/data/
 
 # IDE
 .vscode/

@@ -29,6 +29,8 @@ def main():
     try:
         while True:
             time.sleep(60)
+            # Heartbeat for /api/scheduler/status (replaces `pgrep`).
+            scheduler_service.write_heartbeat()
             # 每分钟检查一次调度器状态
             if not scheduler_service.scheduler.running:
                 print("⚠️ 调度器已停止，正在重启...")

@@ -2,6 +2,8 @@
 Address API Endpoints - Attack Address List
 """
 from datetime import datetime
+
+from app.utils.timezone import local_now
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response as HTTPResponse
@@ -250,7 +252,7 @@ async def export_addresses(
 
     # 加 UTF-8 BOM，确保 Excel 正确识别中文
     csv_bytes = ("\ufeff" + buf.getvalue()).encode("utf-8")
-    filename = f"addresses_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"addresses_{local_now().strftime('%Y%m%d_%H%M%S')}.csv"
 
     return HTTPResponse(
         content=csv_bytes,

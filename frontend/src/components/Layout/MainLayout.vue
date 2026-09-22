@@ -207,7 +207,8 @@ const fetchSchedulerStatus = async () => {
   try {
     const res = await scheduler.status()
     // res 已经是 response.data（经过拦截器），再取 .data 是实际负载
-    const payload = res.data || res
+    // {code:200, data:{running, heartbeat_at, jobs:[...]}}
+    const payload = res.data || {}
     schedulerRunning.value = payload.running ?? false
     schedulerJobs.value = payload.jobs || []
   } catch {
@@ -217,6 +218,8 @@ const fetchSchedulerStatus = async () => {
 }
 
 onMounted(() => {
+  // cookie 会话恢复：拉取当前用户（失败则由 401 拦截器处理）
+  userStore.fetchMe().catch(() => {})
   fetchSchedulerStatus()
   schedulerTimer = setInterval(fetchSchedulerStatus, 30000)
 })
@@ -273,7 +276,7 @@ const pwdRules = {
 
 const handleUserCommand = async (cmd) => {
   if (cmd === 'logout') {
-    localStorage.clear()
+    await userStore.logout()
     router.push('/login')
   } else if (cmd === 'changePwd') {
     pwdDialogVisible.value = true

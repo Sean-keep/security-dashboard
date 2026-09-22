@@ -1,5 +1,7 @@
 import json
 from datetime import datetime, timedelta
+
+from app.utils.timezone import local_now
 from sqlalchemy import text as sa_text
 from app.models.address import Address
 from app.models.alert import Alert
@@ -28,7 +30,7 @@ def record_execution_log(db, rule_id, rule_name="", alert_count=0, detail=None,
             {
                 "rule_id": rule_id,
                 "rule_name": rule_name or "",
-                "executed_at": datetime.now(),
+                "executed_at": local_now(),
                 "alert_count": alert_count or 0,
                 "detail": detail_str,
                 "status": status,
@@ -286,7 +288,7 @@ class RuleExecutor:
                 country = _country_cache.get(ip, "")
 
             # Upsert: 同一天内存在则累加 attack_count + 更新时间，不存在则插入
-            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start = local_now().replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = today_start + timedelta(days=1)
             existing = self.db_session.query(Address).filter(
                 Address.ip_address == ip,
@@ -304,7 +306,7 @@ class RuleExecutor:
                 existing.end_time = _end_dt
                 existing.duration = _dur_int
                 existing.severity = record_severity
-                existing.updated_at = datetime.now()
+                existing.updated_at = local_now()
             else:
                 addr = Address(
                     ip_address=ip,

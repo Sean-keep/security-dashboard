@@ -270,7 +270,6 @@ const openDetail = async (row) => {
 
 const quickConfirm = (row) => updateAlert(row.id, 'confirmed')
 const quickResolve = (row) => updateAlert(row.id, 'resolved')
-const markFalsePositive = (row) => updateAlert(row.id, 'false_positive')
 
 // 表格列快捷填写处理建议
 const openSuggestionDialog = async (row) => {

@@ -2,7 +2,7 @@
   <div class="remote-container">
     <div class="page-header">
       <h2>远程接收接口</h2>
-      <span class="tip">定义多个接收接口（各带名称），源端只需往对应接口 POST 数据即自动存储</span>
+      <span class="tip">定义多个接收接口（各带名称），源端往对应接口 POST 数据并携带请求头 <code>X-Ingest-Token: &lt;token&gt;</code> 即自动存储</span>
     </div>
 
     <el-card class="section" shadow="never">
@@ -85,15 +85,22 @@
         <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
         <el-table-column prop="count" label="接收数" width="90" sortable />
         <el-table-column prop="created_at" label="创建时间" width="170" />
+        <el-table-column label="Token" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.has_token" type="success" size="small">已设置</el-tag>
+            <el-tag v-else type="info" size="small">未设置</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="接收地址" min-width="280">
           <template #default="{ row }">
             <code class="url">{{ baseUrl }}/api/remote/ingest/{{ row.name }}</code>
             <el-button size="small" type="text" @click.stop="copy(baseUrl + '/api/remote/ingest/' + row.name)">复制</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="130" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="text" @click.stop="openEdit(row)">编辑</el-button>
+            <el-button size="small" type="text" @click.stop="rotateToken(row)">重置Token</el-button>
             <el-button size="small" type="text" style="color:#f56c6c" @click.stop="removeEndpoint(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -114,6 +121,21 @@
       <template #footer>
         <el-button @click="showCreate = false">取消</el-button>
         <el-button type="primary" @click="create">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Token 展示（仅创建 / 重置后显示一次） -->
+    <el-dialog v-model="showToken" title="Ingest Token" width="520px" :close-on-click-modal="false">
+      <el-alert type="warning" :closable="false" show-icon style="margin-bottom:12px">
+        Token 仅在此展示一次，关闭后无法再次查看，请立即复制保存。源端请求需携带请求头
+        <code>X-Ingest-Token: &lt;token&gt;</code>
+      </el-alert>
+      <div class="token-row">
+        <code class="token-value">{{ tokenValue }}</code>
+        <el-button type="primary" size="small" @click="copy(tokenValue)">复制</el-button>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="showToken = false">我已保存</el-button>
       </template>
     </el-dialog>
 
@@ -152,6 +174,10 @@ const form = reactive({ name: '', description: '' })
 const showEdit = ref(false)
 const editForm = reactive({ id: null, name: '', description: '' })
 
+// Token 一次性展示
+const showToken = ref(false)
+const tokenValue = ref('')
+
 // 展开状态
 const expandedRow = ref(null)
 const expandData = reactive({})    // endpoint_id → log list
@@ -179,16 +205,34 @@ async function create() {
     ElMessage.warning('名称只能包含字母、数字、下划线和横线（1-64位）')
     return
   }
+  // 拦截器保证 code === 200 才会 resolve
   const res = await remoteApi.createEndpoint(form.name.trim(), form.description.trim())
-  if (res.code === 0) {
-    ElMessage.success('接口已创建')
-    showCreate.value = false
-    form.name = ''
-    form.description = ''
-    loadEndpoints()
-  } else {
-    ElMessage.error(res.msg || '创建失败')
+  ElMessage.success('接口已创建')
+  showCreate.value = false
+  form.name = ''
+  form.description = ''
+  loadEndpoints()
+  // token 仅展示一次
+  const tok = res.data?.token
+  if (tok) {
+    tokenValue.value = tok
+    showToken.value = true
   }
+}
+
+async function rotateToken(row) {
+  await ElMessageBox.confirm(
+    `确定重置接口「${row.name}」的 Token？旧 Token 将立即失效，源端需同步更换。`,
+    '确认重置 Token',
+    { type: 'warning', confirmButtonText: '重置', cancelButtonText: '取消' }
+  )
+  const res = await remoteApi.rotateToken(row.id)
+  const tok = res.data?.token
+  if (tok) {
+    tokenValue.value = tok
+    showToken.value = true
+  }
+  loadEndpoints()
 }
 
 async function openEdit(row) {
@@ -207,14 +251,10 @@ async function saveEdit() {
     ElMessage.warning('名称只能包含字母、数字、下划线和横线（1-64位）')
     return
   }
-  const res = await remoteApi.updateEndpoint(editForm.id, editForm.name.trim(), editForm.description.trim())
-  if (res.code === 0) {
-    ElMessage.success('已保存')
-    showEdit.value = false
-    loadEndpoints()
-  } else {
-    ElMessage.error(res.msg || '保存失败')
-  }
+  await remoteApi.updateEndpoint(editForm.id, editForm.name.trim(), editForm.description.trim())
+  ElMessage.success('已保存')
+  showEdit.value = false
+  loadEndpoints()
 }
 
 async function removeEndpoint(row) {
@@ -382,4 +422,20 @@ onMounted(() => {
   overflow: auto;
 }
 .expand-pager { margin-top: 10px; justify-content: flex-end; }
+
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.token-value {
+  flex: 1;
+  font-family: monospace;
+  font-size: 13px;
+  word-break: break-all;
+  background: #f5f7fa;
+  padding: 8px 12px;
+  border-radius: 4px;
+  color: #303133;
+}
 </style>

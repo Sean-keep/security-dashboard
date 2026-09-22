@@ -1,9 +1,9 @@
 """
-Rule Execution Log Model - 瑙勫垯鎵ц璁板綍
+Rule Execution Log Model — 规则执行记录
 """
-from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime
 from app.models.base import Base
+from app.utils.timezone import local_now
 
 
 class RuleExecutionLog(Base):
@@ -14,8 +14,9 @@ class RuleExecutionLog(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     rule_id = Column(Integer, nullable=False, index=True)
     rule_name = Column(String(255), default="")
-    executed_at = Column(DateTime, default=datetime.now, index=True)
-    alert_count = Column(Integer, default=0)  # 瑙﹀彂鍛婅鏁?    detail = Column(Text, default="")  # JSON 瀛楃涓? 璁板綍鎽樿淇℃伅
+    executed_at = Column(DateTime, default=local_now, index=True)
+    alert_count = Column(Integer, default=0)       # 本次执行触发的告警数
+    detail = Column(Text, default="")              # JSON 字符串：记录摘要信息
     status = Column(String(50), default="success")  # success / error
     error_message = Column(Text, nullable=True)
 

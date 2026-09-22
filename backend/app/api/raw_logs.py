@@ -53,8 +53,9 @@ def _get_es_config(db: Session) -> ESConfig:
 def _build_time_range(time_range: str):
     """返回 ES 查询用的时间范围，支持 today 和相对时间"""
     if time_range == "today":
-        from datetime import datetime, timedelta
-        now = datetime.utcnow()
+        from datetime import datetime, timezone
+        # ES indexes UTC. "today" here means the UTC day boundary.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         return {"gte": today_start.isoformat() + "Z"}
     mapping = {

@@ -1,4 +1,21 @@
-version: "3.8"
+# Security Dashboard — application stack (mysql + backend + frontend)
+#
+# Secrets come from `.env` (see `.env.example`). There are NO insecure
+# defaults: required variables use the `${VAR:?...}` form so `docker compose
+# config` / `up` fail fast when a secret is unset.
+#
+# MySQL is deliberately NOT published to the host. The backend reaches it on
+# the `sec-net` network via service name `mysql`. Expose 3306 only if you
+# really need host-side tooling, and then bind to loopback (see the comment
+# on the mysql service).
+#
+# Bring the stack up:
+#   cp .env.example .env    # then fill in every empty secret
+#   docker compose up -d --build
+#
+# MySQL 8.0 note: `--default-authentication-plugin=mysql_native_password` is
+# deprecated and removed in later 8.0 images. The default caching_sha2_password
+# works fine with PyMySQL/aiomysql, so we only set charset/collation below.
 
 networks:
   sec-net:
@@ -9,25 +26,39 @@ volumes:
     driver: local
 
 services:
-  # MySQL 数据库
+  # MySQL 8 database (internal only)
   mysql:
     image: mysql:8.0
     container_name: sec-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-your_mysql_root_password}
-      MYSQL_USER: ${MYSQL_USER:-your_mysql_user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-your_mysql_password}
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env (see .env.example)}
+      MYSQL_USER: ${MYSQL_USER:-secapp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env (see .env.example)}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-security_dashboard}
     volumes:
       - mysql-data:/var/lib/mysql
-    ports:
-      - "3306:3306"
-    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    # No `ports:` on purpose — do not publish MySQL to the host.
+    # If you must expose it for local tooling, bind to loopback only:
+    #   ports:
+    #     - "127.0.0.1:3306:3306"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      # CMD-SHELL (not exec-form CMD): the shell expands $MYSQL_ROOT_PASSWORD
+      # from the container environment. Exec-form CMD does NOT expand env vars,
+      # and hardcoding the password here would leak it via `docker inspect` /
+      # `ps`. Tradeoff: the expanded password appears briefly in the healthcheck
+      # process argv inside the container.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - sec-net
 
-  # FastAPI 后端
+  # FastAPI backend
   backend:
     build:
       context: ./backend
@@ -35,29 +66,74 @@ services:
     container_name: sec-backend
     restart: unless-stopped
     environment:
-      - SECRET_KEY=${SECRET_KEY:-your-secret-key-min-32-chars}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-jwt-secret-key}
-      - MYSQL_HOST=${MYSQL_HOST:-localhost}
-      - MYSQL_PORT=${MYSQL_PORT:-3306}
-      - MYSQL_USER=${MYSQL_USER:-your_mysql_user}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-your_mysql_password}
-      - MYSQL_DATABASE=${MYSQL_DATABASE:-security_dashboard}
-      - ES_HOST=${ES_HOST:-your-es-host}
-      - ES_PORT=${ES_PORT:-9200}
-      - ES_SCHEME=${ES_SCHEME:-https}
-      - ES_USER=${ES_USER:-elastic}
-      - ES_PASSWORD=${ES_PASSWORD:-your_es_password}
-      - ES_INDEX=${ES_INDEX:-online*nginx*}
-      - ES_VERIFY_CERTS=${ES_VERIFY_CERTS:-false}
-      - TZ=Asia/Shanghai
+      TZ: Asia/Shanghai
+      # Application
+      APP_NAME: ${APP_NAME:-Security Dashboard API}
+      APP_VERSION: ${APP_VERSION:-2.0.0}
+      DEBUG: ${DEBUG:-0}
+      # Dev/test only — see .env.example. Must stay 0 in production.
+      ALLOW_INSECURE_DEFAULTS: ${ALLOW_INSECURE_DEFAULTS:-0}
+      # Secrets (required)
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env (see .env.example)}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env (see .env.example)}
+      # JWT / cookies / password policy
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      ACCESS_COOKIE_NAME: ${ACCESS_COOKIE_NAME:-sd_access}
+      REFRESH_COOKIE_NAME: ${REFRESH_COOKIE_NAME:-sd_refresh}
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
+      # nginx sits in front of the API and overwrites these headers, so 1 is
+      # the correct posture here. Never enable on a directly exposed API.
+      TRUSTED_PROXY_HEADERS: ${TRUSTED_PROXY_HEADERS:-0}
+      PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-8}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
+      LOGIN_LOCKOUT_MINUTES: ${LOGIN_LOCKOUT_MINUTES:-15}
+      # MySQL — host must be the compose service name, NOT localhost.
+      MYSQL_HOST: ${MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:-secapp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env (see .env.example)}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-security_dashboard}
+      USE_SQLITE: ${USE_SQLITE:-0}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      # Elasticsearch
+      ES_HOST: ${ES_HOST:-host.docker.internal}
+      ES_PORT: ${ES_PORT:-9200}
+      ES_SCHEME: ${ES_SCHEME:-https}
+      ES_USER: ${ES_USER:-elastic}
+      ES_PASSWORD: ${ES_PASSWORD:?Set ES_PASSWORD in .env (see .env.example)}
+      ES_INDEX: ${ES_INDEX:-security-logs-*}
+      ES_VERIFY_CERTS: ${ES_VERIFY_CERTS:-false}
+      # Script execution
+      ENABLE_SCRIPT_EXECUTION: ${ENABLE_SCRIPT_EXECUTION:-true}
+      SCRIPT_TIMEOUT_SECONDS: ${SCRIPT_TIMEOUT_SECONDS:-30}
+      SCRIPT_MEMORY_LIMIT_MB: ${SCRIPT_MEMORY_LIMIT_MB:-512}
+      # Remote ingest
+      INGEST_MAX_BODY_BYTES: ${INGEST_MAX_BODY_BYTES:-1048576}
+      INGEST_RATE_LIMIT_PER_MINUTE: ${INGEST_RATE_LIMIT_PER_MINUTE:-120}
+      # Startup seeding
+      SEED_SYSTEM_CONFIG: ${SEED_SYSTEM_CONFIG:-true}
+    # Lets the backend reach host-side ES / Prometheus / Grafana.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      # python is always present in the image; curl/wget may not be.
+      # GET /health actually pings the DB and returns {"status":"healthy",...}.
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 25s
     networks:
       - sec-net
 
-  # Vue3 前端
+  # Vue3 SPA + nginx reverse proxy
   frontend:
     build:
       context: ./frontend
@@ -67,6 +143,13 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+    healthcheck:
+      # wget is busybox wget in the nginx:alpine image.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     networks:
       - sec-net

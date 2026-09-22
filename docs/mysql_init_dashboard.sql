@@ -323,11 +323,14 @@ ON DUPLICATE KEY UPDATE value=VALUES(value), label=VALUES(label), description=VA
 -- ============================================================
 -- 默认管理员账号 (密码: 123456)
 -- 哈希由 bcrypt==4.0.1 / passlib==1.7.4 生成，与后端一致
+-- 对应明文密码：ChangeMe2026（见 README「初始账号」）
+-- 该密码满足 app/core/policy.py 的密码强度策略，登录后请立即修改。
+-- 注意：旧哈希无法对应 README 曾经写的 admin123，那条文档本身就是错的。
 -- ============================================================
 INSERT INTO users (username, password_hash, nickname, role, is_active, login_count, error_count, created_at)
 VALUES (
   'admin',
-  '$2b$12$uvw0u4gdDA8SfWfAjV8ApuVyfQ6CoD4nAxVT0bhi//l31/SmCWgTW',
+  '$2b$12$2ePs.QI7GbbkZc9nQ5UIIupQExwzo/pw2YcYzrPZD5WAa4exbGdS.',
   '管理员',
   'admin',
   1,
