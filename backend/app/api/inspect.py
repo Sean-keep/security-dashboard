@@ -19,6 +19,7 @@ container/VM and call it over the network — do not relax this module.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+import hashlib
 import json
 import os
 import re
@@ -43,6 +44,7 @@ from app.models.custom_metric import CustomMetric
 from app.models.script import Script
 from app.models.user import User
 from app.schemas.common import Response
+from app.utils.timezone import local_now
 from app.services.es_service import ESConfig, get_es_service
 from app.utils.timezone import utc_iso, utc_naive
 
@@ -186,6 +188,7 @@ def _run_script(
     timeout = timeout or settings.SCRIPT_TIMEOUT_SECONDS
     run_env = _scrubbed_env(env)
     preexec = _limit_resources(settings.SCRIPT_MEMORY_LIMIT_MB, timeout)
+    started = time.monotonic()
 
     # Run from a throwaway cwd so scripts cannot casually read app source.
     with tempfile.TemporaryDirectory(prefix="sdrun-") as workdir:
@@ -213,7 +216,54 @@ def _run_script(
         "stdout": result.stdout.decode("utf-8", errors="replace")[:200_000],
         "stderr": result.stderr.decode("utf-8", errors="replace")[:200_000],
         "exit_code": result.returncode,
+        "duration_ms": int((time.monotonic() - started) * 1000),
     }
+
+
+def _version_hash(code: str) -> str:
+    return hashlib.sha256((code or "").encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _record_script_run(
+    db: Session,
+    result: Dict[str, Any],
+    *,
+    script_id=None,
+    script_name="",
+    script_type="python",
+    code="",
+    run_by="",
+    trigger="manual",
+    started_at=None,
+) -> None:
+    """落一条审计记录。失败不该影响调用方返回，所以只打日志。"""
+    try:
+        from app.models.script_run import ScriptRunLog
+
+        stdout = (result.get("stdout") or "")
+        stderr = (result.get("stderr") or "")
+        db.add(ScriptRunLog(
+            script_id=script_id,
+            script_name=script_name or "",
+            script_version_hash=_version_hash(code),
+            script_type=script_type or "python",
+            run_by=run_by or "",
+            trigger=trigger,
+            exit_code=result.get("exit_code"),
+            duration_ms=result.get("duration_ms"),
+            stdout_tail=stdout[-8000:],
+            stderr_tail=stderr[-8000:],
+            error="" if result.get("exit_code") == 0 else (stderr or stdout)[:500],
+            started_at=started_at or local_now(),
+            finished_at=local_now(),
+        ))
+        db.commit()
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print(f"[Inspect] failed to record script run: {exc}")
 
 
 def _get_es_config(db: Session) -> ESConfig:
@@ -487,7 +537,14 @@ def execute_scripts(
     ).all()
     results = []
     for s in scripts:
+        started = local_now()
         r = _run_script(s.content, s.script_type, env=req.extra_env or None)
+        _record_script_run(
+            db, r,
+            script_id=s.id, script_name=s.name, script_type=s.script_type,
+            code=s.content, run_by=current_user.username,
+            trigger="manual", started_at=started,
+        )
         results.append({"id": s.id, "name": s.name, **r})
     return Response(data={"results": results, "total": len(results)})
 
@@ -508,7 +565,14 @@ def execute_block(
     for t in req.targets:
         env = dict(t.env or {})
         env.setdefault("TARGET_IP", t.ip)
+        started = local_now()
         r = _run_script(script.content, script.script_type, env=env)
+        _record_script_run(
+            db, r,
+            script_id=script.id, script_name=f"{script.name}@{t.ip}",
+            script_type=script.script_type, code=script.content,
+            run_by=current_user.username, trigger="block", started_at=started,
+        )
         results.append({"ip": t.ip, "name": script.name, **r})
     return Response(data={"results": results, "total": len(results)})
 
@@ -516,11 +580,61 @@ def execute_block(
 @router.post("/execute", response_model=Response)
 def execute_adhoc(
     req: AdhocExecRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
     _require_script_execution_enabled()
+    started = local_now()
     result = _run_script(req.script, req.type)
+    _record_script_run(
+        db, result,
+        script_id=None, script_name="(adhoc)", script_type=req.type,
+        code=req.script, run_by=current_user.username,
+        trigger="adhoc", started_at=started,
+    )
     return Response(data=result)
+
+
+@router.get("/scripts/{script_id}/runs", response_model=Response)
+def list_script_runs(
+    script_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """审计：某个脚本的历史执行记录（谁跑的、哪一版、结果、耗时）。"""
+    from app.models.script_run import ScriptRunLog
+
+    q = db.query(ScriptRunLog).filter(ScriptRunLog.script_id == script_id)
+    total = q.count()
+    rows = (
+        q.order_by(ScriptRunLog.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return Response(data={
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [{
+            "id": r.id,
+            "script_id": r.script_id,
+            "script_name": r.script_name,
+            "script_version_hash": r.script_version_hash,
+            "script_type": r.script_type,
+            "run_by": r.run_by,
+            "trigger": r.trigger,
+            "exit_code": r.exit_code,
+            "duration_ms": r.duration_ms,
+            "stdout_tail": r.stdout_tail,
+            "stderr_tail": r.stderr_tail,
+            "error": r.error,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+        } for r in rows],
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -632,17 +746,16 @@ def prometheus_metrics(
         mem_total = _query("node_memory_MemTotal_bytes")
         disk_used = _query('node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_free_bytes{mountpoint="/"}')
         disk_total = _query('node_filesystem_size_bytes{mountpoint="/"}')
+        # 瞬时查询只有一个采样点，不存在「峰值」。早先这里写 `peak = cpu * 1.2`
+        # —— 那是编的数字，报告里会当成事实。瞬时路径一律 peak = avg。
+        cpu_avg = round(cpu, 2) if cpu else None
+        mem_avg = round((1 - (mem_total - mem_used or 0) / (mem_total or 1)) * 100, 2) if mem_total else None
+        disk_avg = round((disk_used / disk_total * 100) if disk_total else 0, 2) if disk_total else None
         return Response(data={
             "connected": True,
-            "cpu": {"avg": round(cpu, 2) if cpu else None, "peak": round(cpu * 1.2, 2) if cpu else None},
-            "memory": {
-                "avg": round((1 - (mem_total - mem_used or 0) / (mem_total or 1)) * 100, 2),
-                "peak": round((1 - (mem_total - mem_used or 0) / (mem_total or 1)) * 100, 2),
-            } if mem_total else None,
-            "disk": {
-                "avg": round((disk_used / disk_total * 100) if disk_total else 0, 2),
-                "peak": round((disk_used / disk_total * 100) if disk_total else 0, 2),
-            } if disk_total else None,
+            "cpu": {"avg": cpu_avg, "peak": cpu_avg},
+            "memory": {"avg": mem_avg, "peak": mem_avg} if mem_avg is not None else None,
+            "disk": {"avg": disk_avg, "peak": disk_avg} if disk_avg is not None else None,
         })
     except Exception as e:
         return Response(data={"connected": False, "error": str(e)})
@@ -750,21 +863,11 @@ def _compute_server_metrics(db: Session, end_ts: int, seconds: int):
         dl_avg, dl_peak = _stats(dl_vals)
         disks = []
         if dr_vals:
-            disks.append({"mountpoint": "/", "avg": dr_avg, "peak": dr_peak})
+            disks.append({"mountpoint": "/", "avg": dr_avg, "peak": dr_peak, "series": dr_vals})
         if dl_vals:
-            disks.append({"mountpoint": "/data/logs", "avg": dl_avg, "peak": dl_peak})
-        # Merge every mountpoint's series (for the frontend trend chart).
-        disk_series = []
-        if dr_vals:
-            disk_series.extend(dr_vals)
-        if dl_vals:
-            disk_series.extend(dl_vals)
-        seen_ts = set()
-        disk_series_dedup = []
-        for p in sorted(disk_series, key=lambda x: x["timestamp"]):
-            if p["timestamp"] not in seen_ts:
-                seen_ts.add(p["timestamp"])
-                disk_series_dedup.append(p)
+            disks.append({"mountpoint": "/data/logs", "avg": dl_avg, "peak": dl_peak, "series": dl_vals})
+        # 不再把两个挂载点的序列揉成一条 disk_series：两个盘的用量叠在同一个
+        # 时间轴上是假数据（同 ts 只留一个）。序列挂在各自的 disks[].series 上。
         servers.append({
             "instance": inst,
             "alias": aliases.get(inst, ""),
@@ -773,7 +876,6 @@ def _compute_server_metrics(db: Session, end_ts: int, seconds: int):
             "disks": disks,
             "cpu_series": cpu_series.get(inst, []),
             "memory_series": mem_series.get(inst, []),
-            "disk_series": disk_series_dedup,
         })
     return servers, prom_url, None
 
@@ -909,6 +1011,7 @@ def grafana_metrics(
         "connected": True,
         "source": "grafana",
         "prom_url": prom_url,
+        "grafana_url": grafana_url,
         "time_range": _time_label,
         "servers": servers,
         "custom": custom_results,

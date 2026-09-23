@@ -18,6 +18,7 @@
       ref="tableRef"
       :data="tableData"
       stripe
+      v-loading="loading"
       @selection-change="onSelectionChange"
       @sort-change="onSortChange"
     >
@@ -82,7 +83,8 @@ defineProps({
   total: { type: Number, default: 0 },
   pagination: { type: Object, required: true },
   multipleSelection: { type: Array, default: () => [] },
-  countryLoadingMap: { type: Object, default: () => ({}) }
+  countryLoadingMap: { type: Object, default: () => ({}) },
+  loading: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
@@ -128,10 +130,10 @@ const loadData = () => emit('load')
 </script>
 
 <style lang="scss" scoped>
-.table-toolbar { display: flex; justify-content: space-between; align-items: center; span { font-size: 14px; color: #666; } }
-.ip-text { font-family: 'Courier New', monospace; color: #409EFF; }
-.country-text { font-size: 13px; color: #606266; }
-.loading-text { font-size: 12px; color: #a0a0a0; }
-.empty-text { color: #bbb; }
+.table-toolbar { display: flex; justify-content: space-between; align-items: center; span { font-size: 14px; color: var(--el-text-color-regular); } }
+.ip-text { font-family: 'Courier New', monospace; color: var(--el-color-primary); }
+.country-text { font-size: 13px; color: var(--el-text-color-regular); }
+.loading-text { font-size: 12px; color: var(--el-text-color-secondary); }
+.empty-text { color: var(--el-text-color-placeholder); }
 .pagination-wrap { display: flex; justify-content: flex-end; margin-top: 16px; }
 </style>

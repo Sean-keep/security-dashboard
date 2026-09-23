@@ -126,14 +126,14 @@ const handleLogin = async () => {
 
 .login-title {
   font-size: 22px;
-  color: #303133;
+  color: var(--el-text-color-primary);
   margin: 0 0 6px;
   font-weight: 600;
 }
 
 .login-subtitle {
   font-size: 13px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   margin: 0;
   letter-spacing: 1px;
 }
@@ -146,7 +146,7 @@ const handleLogin = async () => {
 .login-tip {
   text-align: center;
   font-size: 12px;
-  color: #c0c4cc;
+  color: var(--el-text-color-placeholder);
   margin-top: 10px;
 }
 </style>

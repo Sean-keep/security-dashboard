@@ -25,10 +25,10 @@ const {
 </script>
 
 <style lang="scss" scoped>
-.ip-text { font-family: 'Courier New', monospace; color: #409EFF; }
-.empty-text { color: #bbb; }
-.block-result-item { margin-bottom: 10px; border: 1px solid #e4e7ed; border-radius: 4px; overflow: hidden; }
-.block-result-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #f5f7fa; }
+.ip-text { font-family: 'Courier New', monospace; color: var(--el-color-primary); }
+.empty-text { color: var(--el-text-color-placeholder); }
+.block-result-item { margin-bottom: 10px; border: 1px solid var(--el-border-color-light); border-radius: 4px; overflow: hidden; }
+.block-result-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: var(--el-fill-color-light); }
 .block-result-out { margin: 0; padding: 8px 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto; }
-.block-result-err { margin: 0; padding: 8px 12px; font-size: 12px; color: #f56c6c; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto; }
+.block-result-err { margin: 0; padding: 8px 12px; font-size: 12px; color: var(--el-color-danger); white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow: auto; }
 </style>

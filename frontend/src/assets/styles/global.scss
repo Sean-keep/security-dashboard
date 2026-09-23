@@ -1,10 +1,34 @@
-/* 全局样式 */
+/* 全局样式
+ *
+ * 配色基准：Element Plus 浅色主题。Element Plus 已经把整套颜色定义成
+ * `--el-*` CSS 变量，所以这里不要再引入第二套十六进制调色板 —— 所有
+ * 颜色一律写 `var(--el-…)`，主题才会整体一致。
+ *
+ * 仅有的两个例外是 `--code-bg` / `--code-fg`：脚本输出、payload 预览这类
+ * 「终端」表面刻意用深底浅字，和周围的浅色面板区分开。它们也是 token，
+ * 不允许在组件里再写死 #1e1e1e / #d4d4d4。
+ */
+:root {
+  --code-bg: #1e1e1e;
+  --code-fg: #d4d4d4;
+
+  /* 行内代码（PromQL 表达式这类嵌在正文里的片段）：浅底粉字。
+   * 与 --code-* 同属「代码面」token，组件里不要再写死 #c7254e / #fdf2f5。 */
+  --code-inline-bg: #fdf2f5;
+  --code-inline-fg: #c7254e;
+
+  /* 页面级底色：比卡片略深一档，让白色卡片浮起来 */
+  --page-bg: var(--el-fill-color-light);
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  background: var(--page-bg);
+  color: var(--el-text-color-regular);
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -18,18 +42,35 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--el-border-color);
   border-radius: 3px;
-  &:hover { background: rgba(0, 0, 0, 0.35); }
+  &:hover { background: var(--el-border-color-dark); }
+}
+
+/* 代码 / 终端输出表面（脚本 stdout、payload 预览、控制台） */
+.code-surface {
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
 }
 
 /* Element Plus 覆盖 */
 .el-card {
   border-radius: 10px;
+  background: var(--el-bg-color);
+  border-color: var(--el-border-color-lighter);
   .el-card__header {
     padding: 14px 20px;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid var(--el-border-color-extra-light);
     font-weight: 600;
+    color: var(--el-text-color-primary);
   }
   .el-card__body {
     padding: 16px 20px;
@@ -39,11 +80,19 @@ body {
 .el-table {
   border-radius: 8px;
   overflow: hidden;
+  --el-table-header-bg-color: var(--el-fill-color-light);
+  --el-table-tr-bg-color: var(--el-bg-color);
+  --el-table-row-hover-bg-color: var(--el-fill-color-light);
   .el-table__header th {
-    background: #fafafa !important;
-    color: #333;
+    background: var(--el-fill-color-light) !important;
+    color: var(--el-text-color-primary);
     font-weight: 600;
   }
+}
+
+.el-dialog {
+  --el-dialog-bg-color: var(--el-bg-color);
+  border-radius: 10px;
 }
 
 /* 分页 */
@@ -59,5 +108,5 @@ body {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
-  h2 { margin: 0; font-size: 18px; color: #333; }
+  h2 { margin: 0; font-size: 18px; color: var(--el-text-color-primary); }
 }

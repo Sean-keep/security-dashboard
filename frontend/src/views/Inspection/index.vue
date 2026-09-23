@@ -27,7 +27,7 @@
               <template #default="{ row }">
                 <el-checkbox v-model="selectedScripts" :value="row.id" style="margin-right:8px">选中</el-checkbox>
                 <el-button size="small" type="text" @click="editScript(row)">编辑</el-button>
-                <el-button size="small" type="text" style="color:#f56c6c" @click="removeScript(row.id)">删除</el-button>
+                <el-button size="small" type="text" style="color:var(--el-color-danger)" @click="removeScript(row.id)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -265,23 +265,23 @@ onMounted(() => {
 .inspection-tabs :deep(.el-tabs__header) { margin-bottom: 16px; }
 .tab-content { min-height: 400px; }
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.section-title { font-weight: 600; font-size: 14px; color: #303133; }
+.section-title { font-weight: 600; font-size: 14px; color: var(--el-text-color-primary); }
 .script-table { margin-bottom: 16px; }
 .exec-section { margin: 12px 0; }
 .results-section { margin-top: 16px; }
-.result-item { margin-bottom: 12px; border: 1px solid #e4e7ed; border-radius: 4px; overflow: hidden; }
-.result-header { background: #f5f7fa; padding: 8px 12px; display: flex; align-items: center; }
-.result-output { margin: 0; padding: 8px 12px; background: #1e1e1e; color: #d4d4d4; font-size: 12px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.result-item { margin-bottom: 12px; border: 1px solid var(--el-border-color-light); border-radius: 4px; overflow: hidden; }
+.result-header { background: var(--el-fill-color-light); padding: 8px 12px; display: flex; align-items: center; }
+.result-output { margin: 0; padding: 8px 12px; background: var(--code-bg); color: var(--code-fg); font-size: 12px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 .adhoc-section { display: flex; gap: 8px; align-items: flex-start; }
 .adhoc-result { margin-top: 12px; }
-.adhoc-result pre { margin: 0; padding: 12px; background: #1e1e1e; color: #d4d4d4; font-size: 12px; border-radius: 4px; white-space: pre-wrap; max-height: 300px; overflow: auto; }
+.adhoc-result pre { margin: 0; padding: 12px; background: var(--code-bg); color: var(--code-fg); font-size: 12px; border-radius: 4px; white-space: pre-wrap; max-height: 300px; overflow: auto; }
 .filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .traffic-result { margin-top: 12px; }
-.traffic-summary { margin-bottom: 8px; color: #606266; font-size: 13px; }
-.info-tip { margin-top: 16px; padding: 12px; background: #fdf6ec; border-radius: 4px; color: #e6a23c; font-size: 13px; }
+.traffic-summary { margin-bottom: 8px; color: var(--el-text-color-regular); font-size: 13px; }
+.info-tip { margin-top: 16px; padding: 12px; background: var(--el-color-warning-light-9); border-radius: 4px; color: var(--el-color-warning); font-size: 13px; }
 .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 20px; }
-.metric-card { background: #f5f7fa; border-radius: 8px; padding: 20px; text-align: center; }
-.metric-title { font-size: 13px; color: #909399; margin-bottom: 8px; }
-.metric-value { font-size: 28px; font-weight: 700; color: #303133; }
-.metric-sub { font-size: 12px; color: #909399; margin-top: 4px; }
+.metric-card { background: var(--el-fill-color-light); border-radius: 8px; padding: 20px; text-align: center; }
+.metric-title { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 8px; }
+.metric-value { font-size: 28px; font-weight: 700; color: var(--el-text-color-primary); }
+.metric-sub { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 </style>

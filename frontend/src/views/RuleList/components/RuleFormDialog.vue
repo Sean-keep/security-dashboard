@@ -33,7 +33,7 @@
       </el-form-item>
       <el-form-item v-if="ruleForm.schedule_type === 'cron'" label="Cron表达式" label-width="100">
         <el-input v-model="ruleForm.schedule_value" placeholder="如: 0 9 * * * (每天9点)" style="width:300px" size="default" />
-        <span style="margin-left:8px;color:#888;font-size:12px">分 时 日 月 周</span>
+        <span style="margin-left:8px;color:var(--el-text-color-secondary);font-size:12px">分 时 日 月 周</span>
       </el-form-item>
 
       <el-form-item label="规则描述">
@@ -117,7 +117,7 @@
               <el-option label="高 (high)" value="high" />
               <el-option label="严重 (critical)" value="critical" />
             </el-select>
-            <span style="margin-left:12px;color:#888;font-size:12px">默认等级，满足条件时自动升级</span>
+            <span style="margin-left:12px;color:var(--el-text-color-secondary);font-size:12px">默认等级，满足条件时自动升级</span>
           </el-form-item>
           <el-form-item label="条件升危" label-width="80">
             <div v-for="(cond, idx) in ruleForm.severityConditions" :key="idx" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
@@ -132,7 +132,7 @@
                 <el-option label="包含" value="contains" />
               </el-select>
               <el-input v-model="cond.value" placeholder="值" style="width:100px" />
-              <span style="color:#888">→</span>
+              <span style="color:var(--el-text-color-secondary)">→</span>
               <el-select v-model="cond.severity" style="width:100px">
                 <el-option label="低" value="low" />
                 <el-option label="中" value="medium" />
@@ -142,8 +142,47 @@
               <el-button type="danger" link size="small" @click="ruleForm.severityConditions.splice(idx, 1)">删除</el-button>
             </div>
             <el-button size="small" @click="ruleForm.severityConditions.push({field:'',operator:'==',value:'',severity:'high'})">+ 添加条件</el-button>
-            <span style="margin-left:12px;color:#888;font-size:12px">当条件满足时，告警等级自动升为对应值</span>
+            <span style="margin-left:12px;color:var(--el-text-color-secondary);font-size:12px">当条件满足时，告警等级自动升为对应值</span>
           </el-form-item>
+        </div>
+
+        <el-checkbox v-model="telegramEnabled" style="margin-top:12px">推送到 Telegram</el-checkbox>
+        <div v-if="telegramEnabled" class="action-config">
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="Bot Token" label-width="80">
+                <el-input
+                  v-model="ruleForm.tgBotToken"
+                  type="password"
+                  show-password
+                  :placeholder="ruleForm.tgTokenSet ? '已配置，留空保持不变' : '123456:ABC-DEF...'"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :span="10">
+              <el-form-item label="Chat ID" label-width="80">
+                <el-input v-model="ruleForm.tgChatId" placeholder="-1001234567890 或用户 ID" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="2" style="display:flex;align-items:center">
+              <el-button size="small" :loading="tgTesting" @click="testTelegram">测试</el-button>
+            </el-col>
+          </el-row>
+          <el-form-item label="标题模板" label-width="80">
+            <el-input v-model="ruleForm.tgTitleTemplate" placeholder="可选，留空则用「告警: 规则名」" />
+          </el-form-item>
+          <el-form-item label="消息模板" label-width="80">
+            <el-input
+              v-model="ruleForm.tgTemplate"
+              type="textarea"
+              :rows="3"
+              placeholder="可选，留空则用默认告警文案。&#10;支持 {field_name} 和 {stage.field} 语法，与「创建告警」的内容模板一致"
+            />
+          </el-form-item>
+          <div class="tg-hint">
+            Bot Token 只保存在服务端，接口不会回传明文；编辑时留空表示保持原值。
+            单次执行最多推送 20 条，避免刷屏触发 Telegram 限流。
+          </div>
         </div>
       </div>
     </el-form>
@@ -161,6 +200,7 @@ import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import StageCard from './StageCard.vue'
 import { useRules } from '../composables/useRules'
+import { rules as rulesApi } from '@/api'
 
 const emit = defineEmits(['saved'])
 
@@ -184,6 +224,8 @@ const isEdit = ref(false)
 const editId = ref(null)
 const writeMysqlEnabled = ref(false)
 const createAlertEnabled = ref(false)
+const telegramEnabled = ref(false)
+const tgTesting = ref(false)
 const scheduleValueObj = reactive({ value: 5, unit: 'minutes' })
 const ruleFormRef = ref()
 
@@ -197,7 +239,13 @@ const ruleForm = ref({
   outputMapping: {},  // 输出映射
   actionTable: 'addresses',
   alertTemplate: '',
-  alertTitleTemplate: ''
+  alertTitleTemplate: '',
+  // Telegram 推送。tgTokenSet 只反映服务端「是否已配置」，明文 token 不会回传。
+  tgBotToken: '',
+  tgChatId: '',
+  tgTitleTemplate: '',
+  tgTemplate: '',
+  tgTokenSet: false
 })
 
 const ruleFormRules = {
@@ -271,12 +319,18 @@ const openCreate = async () => {
     alertTemplate: '',
     alertTitleTemplate: '',
     severity: 'medium',
-    severityConditions: []
+    severityConditions: [],
+    tgBotToken: '',
+    tgChatId: '',
+    tgTitleTemplate: '',
+    tgTemplate: '',
+    tgTokenSet: false
   }
   scheduleValueObj.value = 5
   scheduleValueObj.unit = 'minutes'
   writeMysqlEnabled.value = false
   createAlertEnabled.value = false
+  telegramEnabled.value = false
   stageFieldsCache.value = {}
 
   // 获取系统默认ES索引配置
@@ -330,11 +384,16 @@ const openEdit = async (row) => {
       }
     }
 
-    // Parse actions for alert template + severity
+    // Parse actions for alert template + severity + telegram
     let alertTemplate = ''
     let alertTitleTemplate = ''
     let severity = 'medium'
     let severityConditions = []
+    let tgBotToken = ''
+    let tgChatId = ''
+    let tgTitleTemplate = ''
+    let tgTemplate = ''
+    let tgTokenSet = false
     if (data.actions && data.actions.length) {
       for (const act of data.actions) {
         if (act.type === 'create_alert') {
@@ -342,6 +401,14 @@ const openEdit = async (row) => {
           alertTitleTemplate = act.title_template || ''
           severity = act.severity || 'medium'
           severityConditions = act.severity_conditions || []
+        }
+        if (act.type === 'telegram') {
+          // 服务端已脱敏：只会回传 bot_token_set，不会回传明文 token
+          tgBotToken = ''
+          tgChatId = act.chat_id || ''
+          tgTitleTemplate = act.title_template || ''
+          tgTemplate = act.template || ''
+          tgTokenSet = !!act.bot_token_set
         }
       }
     }
@@ -357,10 +424,16 @@ const openEdit = async (row) => {
       alertTemplate,
       alertTitleTemplate,
       severity,
-      severityConditions
+      severityConditions,
+      tgBotToken,
+      tgChatId,
+      tgTitleTemplate,
+      tgTemplate,
+      tgTokenSet
     }
     writeMysqlEnabled.value = !!(data.actions && data.actions.some(a => a.type === 'write_mysql'))
     createAlertEnabled.value = !!(data.actions && data.actions.some(a => a.type === 'create_alert'))
+    telegramEnabled.value = !!(data.actions && data.actions.some(a => a.type === 'telegram'))
     stageFieldsCache.value = {}
     await loadEsIndices()
     for (const stage of ruleForm.value.stages) {
@@ -368,6 +441,25 @@ const openEdit = async (row) => {
     }
     dialogVisible.value = true
   } catch (e) {}
+}
+
+// 连通性测试：用当前表单凭据发一条，不落库
+const testTelegram = async () => {
+  tgTesting.value = true
+  try {
+    await rulesApi.telegramTest({
+      bot_token: ruleForm.value.tgBotToken,
+      chat_id: ruleForm.value.tgChatId,
+      // 编辑时 token 留空则让服务端用已保存的那把
+      rule_id: isEdit.value ? editId.value : null
+    })
+    ElMessage.success('测试消息已发送，请查看 Telegram')
+  } catch (e) {
+    // 拦截器已把业务错误转成 reject
+    ElMessage.error(e.message || '测试失败')
+  } finally {
+    tgTesting.value = false
+  }
 }
 
 // 提交规则
@@ -428,6 +520,19 @@ const submitRule = async () => {
       payload.actions.push(alertAction)
     }
 
+    if (telegramEnabled.value) {
+      const tgAction = {
+        type: 'telegram',
+        chat_id: ruleForm.value.tgChatId,
+        severity: ruleForm.value.severity || 'medium'
+      }
+      // 留空 = 保持原值（服务端 _merge_telegram_secret 处理），所以这里总是上送字段
+      tgAction.bot_token = ruleForm.value.tgBotToken
+      if (ruleForm.value.tgTemplate) tgAction.template = ruleForm.value.tgTemplate
+      if (ruleForm.value.tgTitleTemplate) tgAction.title_template = ruleForm.value.tgTitleTemplate
+      payload.actions.push(tgAction)
+    }
+
     if (isEdit.value) {
       await updateRule(editId.value, payload)
       ElMessage.success('规则更新成功')
@@ -458,7 +563,7 @@ defineExpose({ openCreate, openEdit })
 }
 
 .output-mapping-area {
-  background: #f7f8fa;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
   padding: 12px 16px;
 }
@@ -475,15 +580,22 @@ defineExpose({ openCreate, openEdit })
 }
 
 .actions-area {
-  background: #f7f8fa;
+  background: var(--el-fill-color-light);
   border-radius: 8px;
   padding: 12px 16px;
 }
 
 .action-config {
   margin-top: 12px;
-  background: #fff;
+  background: var(--el-bg-color);
   border-radius: 6px;
   padding: 8px;
+}
+
+.tg-hint {
+  margin: 4px 0 0 80px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
 }
 </style>

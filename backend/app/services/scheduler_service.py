@@ -37,44 +37,43 @@ def _get_es_config_from_db(db) -> ESConfig:
     )
 
 
-def _store_raw_logs_for_alerts(db, es, stages, rule_id):
-    """为刚创建的告警获取并存储ES原始日志"""
+def _store_raw_logs_for_alerts(db, es, stages, alert_ids):
+    """给**指定**告警挂上 ES 原始日志。
+
+    早先签名是 ``(db, es, stages, rule_id)``，内部按「最近 1 分钟 + 同 src_ip」
+    猜哪些告警要挂 —— 一份 500 条的 ES JSON 会写进同 IP 的所有告警（包括几周前
+    那条已 resolved 的），既错又爆库。调用方现在直接把本轮新建的 alert id 递进来。
+    """
     from app.models.alert import Alert
+    from datetime import timedelta
+
+    if not alert_ids:
+        return
     try:
-        # 取stage_1的查询参数
+        if not stages:
+            return
         stage1 = stages[0]
         index = stage1.get("index") or es.config.default_index
         filters = stage1.get("filters", [])
         time_window = stage1.get("time_window", {})
 
-        # 查找该规则刚创建的告警（最近1分钟内）
-        from datetime import datetime, timedelta
-        recent_alerts = db.query(Alert).filter(
-            Alert.rule_id == rule_id,
-            Alert.created_at >= local_now() - timedelta(minutes=1),
-            Alert.src_ip != ""
-        ).all()
-
-        if not recent_alerts:
+        alerts = db.query(Alert).filter(Alert.id.in_(list(alert_ids))).all()
+        if not alerts:
             return
 
-        ips = list(set(a.src_ip for a in recent_alerts))
-
-        for ip in ips:
+        # 每个 IP 查一次，结果只挂到**这个 IP 名下、本轮新建的**告警上
+        for alert in alerts:
+            ip = (alert.src_ip or "").strip()
+            if not ip or alert.raw_logs:
+                continue
             try:
-                # 构建查询：原filters + IP过滤
                 ip_filter = {"field": "src_ip", "operator": "equals", "value": ip}
-                query_filters = list(filters) + [ip_filter]
+                query_filters = (list(filters) if isinstance(filters, list) else []) + [ip_filter]
                 raw_docs = es.execute_query(index, query_filters, time_window, limit=500)
-
                 if raw_docs:
-                    raw_json = json.dumps(raw_docs, ensure_ascii=False, default=str)
-                    # 更新该IP的所有告警
-                    for alert in recent_alerts:
-                        if alert.src_ip == ip:
-                            alert.raw_logs = raw_json
+                    alert.raw_logs = json.dumps(raw_docs, ensure_ascii=False, default=str)
             except Exception as e:
-                print(f"[Scheduler] Failed to fetch raw logs for {ip}: {e}")
+                print(f"[Scheduler] Failed to fetch raw logs for alert {alert.id} ({ip}): {e}")
 
         db.commit()
     except Exception as e:
@@ -86,6 +85,10 @@ class SchedulerService:
 
     _instance = None
     _scheduler = None
+    # job_id -> (schedule_type, schedule_value)，用来判断「调度参数变没变」。
+    # 对账时不能无脑重加 job：IntervalTrigger 一被 replace 就把起算点重置，
+    # 每分钟 reconcile 一次的话定时规则永远不会触发。
+    _job_specs: dict = {}
 
     def __new__(cls):
         if cls._instance is None:
@@ -102,7 +105,37 @@ class SchedulerService:
         if not self._scheduler.running:
             self._scheduler.start()
             self.write_heartbeat()
+            self._add_retention_job()
             print(f"[Scheduler] Started at {local_now()}")
+
+    def _add_retention_job(self):
+        """每天 03:17 清一次旧日志。
+
+        刻意避开整点 —— 整点是备份/巡检脚本的默认档期，抢同一个 MySQL 连接池
+        会互相拖慢。replace_existing + 独立 job_id，reconcile 不会碰它。
+        """
+        def _run_retention():
+            try:
+                from app.services.retention import run_retention
+                deleted = run_retention()
+                if deleted:
+                    print(f"[Scheduler] Retention pruned: {deleted}")
+            except Exception as exc:
+                print(f"[Scheduler] Retention failed: {exc}")
+
+        try:
+            self._scheduler.add_job(
+                _run_retention,
+                trigger=CronTrigger(hour=3, minute=17),
+                id="retention_daily",
+                name="每日数据保留清理",
+                replace_existing=True,
+                misfire_grace_time=3600,
+                coalesce=True,
+                max_instances=1,
+            )
+        except Exception as exc:
+            print(f"[Scheduler] Failed to register retention job: {exc}")
 
     def stop(self):
         """停止调度器"""
@@ -217,17 +250,17 @@ class SchedulerService:
 
                     # 写入 MySQL（actions）
                     actions = json.loads(rule_obj.actions or '[]')
+                    # 给每个动作带上规则元数据（create_alert / telegram 都要用）
                     for act in actions:
-                        if act.get("type") == "create_alert":
-                            act["_rule_id"] = rule_obj.id
-                            act["_rule_name"] = rule_obj.name
-                            act["_rule_severity"] = getattr(rule_obj, "severity", "medium")
+                        act["_rule_id"] = rule_obj.id
+                        act["_rule_name"] = rule_obj.name
+                        act["_rule_severity"] = getattr(rule_obj, "severity", "medium")
                     executor = RuleExecutor(db)
                     written = executor.process_actions(actions, results)
 
                     # 存储触发告警的ES原始日志
-                    if executor.last_alert_count > 0 and stages:
-                        _store_raw_logs_for_alerts(db, es, stages, rule_obj.id)
+                    if executor.created_alert_ids and stages:
+                        _store_raw_logs_for_alerts(db, es, stages, executor.created_alert_ids)
 
                     # 更新规则状态
                     rule_obj.last_run = local_now()
@@ -282,7 +315,15 @@ class SchedulerService:
                 trigger=trigger,
                 id=job_id,
                 name=rule.name,
-                replace_existing=True
+                replace_existing=True,
+                # 进程重启/短暂卡顿不该把这一轮整个吞掉，也不该并发跑同一个规则
+                misfire_grace_time=300,
+                coalesce=True,
+                max_instances=1,
+            )
+            self._job_specs[job_id] = (
+                rule.schedule_type,
+                (rule.schedule_value or "").strip(),
             )
 
             # 更新 next_run（APScheduler 3.x 兼容）
@@ -314,22 +355,52 @@ class SchedulerService:
         if self._scheduler.get_job(job_id):
             self._scheduler.remove_job(job_id)
             print(f"[Scheduler] Removed job for rule ID: {rule_id}")
+        self._job_specs.pop(job_id, None)
+
+    def reconcile(self) -> None:
+        """让内存里的 job 集合跟规则表对齐。
+
+        API（uvicorn）和调度器（run_scheduler.py）是两个进程，JobStore 又是内存型，
+        所以 rules.py 里那些 ``# TODO: Add to scheduler`` 在架构上根本够不着 ——
+        新建的定时规则在重启调度器前一次都不会跑，改了周期仍按旧周期跑。
+
+        不引 IPC，改成定时对账：一个 tick 内收敛，进程崩了也能自愈。
+        """
+        db = SessionLocal()
+        try:
+            desired = {
+                r.id: r
+                for r in db.query(Rule).filter(
+                    Rule.is_enabled.is_(True),
+                    Rule.schedule_type.in_(['interval', 'cron'])
+                ).all()
+            }
+        finally:
+            db.close()
+
+        # 1) 清掉已经不该跑的：规则被删、被停用、或改成了「手动执行」
+        for job in list(self._scheduler.get_jobs()):
+            if not str(job.id).startswith("rule_"):
+                continue
+            try:
+                rid = int(str(job.id).split("_", 1)[1])
+            except (ValueError, IndexError):
+                continue
+            if rid not in desired:
+                self.remove_rule_job(rid)
+
+        # 2) 只在调度参数真变了的时候重建；没变就别碰，否则定时器时钟被清零
+        for rid, rule in desired.items():
+            job_id = f'rule_{rid}'
+            spec = (rule.schedule_type, (rule.schedule_value or '').strip())
+            if self._scheduler.get_job(job_id) is not None and self._job_specs.get(job_id) == spec:
+                continue
+            self.add_rule_job(rule)
 
     def load_all_rules(self):
         """加载所有启用的定时规则"""
-        db = SessionLocal()
-        try:
-            rules = db.query(Rule).filter(
-                Rule.is_enabled == True,
-                Rule.schedule_type.in_(['interval', 'cron'])
-            ).all()
-
-            for rule in rules:
-                self.add_rule_job(rule)
-
-            print(f"[Scheduler] Loaded {len(rules)} scheduled rules")
-        finally:
-            db.close()
+        self.reconcile()
+        print(f"[Scheduler] Loaded {len(self._job_specs)} scheduled rules")
 
     def get_jobs_info(self):
         """获取所有任务信息"""

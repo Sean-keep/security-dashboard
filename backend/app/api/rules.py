@@ -19,7 +19,7 @@ from app.models.user import User
 from app.models.config import SystemConfig
 from app.schemas.rule import RuleCreate, RuleUpdate, RuleResponse
 from app.schemas.common import Response, PaginatedResponse, PaginatedData
-from app.api.security import get_current_user
+from app.api.security import get_current_user, require_roles
 from app.services.es_service import ESService, ESConfig
 from app.utils.timezone import format_dt, local_now
 
@@ -66,6 +66,43 @@ def _inject_severity(actions: List[Dict], default_severity: str = "medium", seve
     return result
 
 
+def _redact_actions(actions: List[Dict]) -> List[Dict]:
+    """出站前抹掉 actions 里的密钥，只回传「是否已配置」。
+
+    bot token 是密钥，不该跟着规则列表/详情回给每一个登录用户 —— 那等于
+    把它放进了浏览器缓存和前端日志。前端用 bot_token_set 决定占位文案。
+    """
+    redacted = []
+    for a in actions or []:
+        a = dict(a)
+        if a.get("type") == "telegram":
+            token = a.pop("bot_token", "") or ""
+            a["bot_token_set"] = bool(token.strip())
+        redacted.append(a)
+    return redacted
+
+
+def _merge_telegram_secret(new_actions: List[Dict], old_actions: List[Dict]) -> List[Dict]:
+    """更新时 bot_token 留空 = 保持原值。
+
+    编辑弹窗拿不到明文 token（见 _redact_actions），所以「没改」和「清空」
+    在载荷里长得一样，都必须解释成「保持原值」。要真正清掉只能填一个新值。
+    """
+    old_tokens = [a.get("bot_token", "") for a in (old_actions or []) if a.get("type") == "telegram"]
+    merged = []
+    idx = 0
+    for a in new_actions or []:
+        a = dict(a)
+        if a.get("type") == "telegram":
+            incoming = (a.get("bot_token") or "").strip()
+            if not incoming:
+                a["bot_token"] = old_tokens[idx] if idx < len(old_tokens) else ""
+            a.pop("bot_token_set", None)
+            idx += 1
+        merged.append(a)
+    return merged
+
+
 def _alert_trend_for_rules(db: Session, rule_ids) -> Dict[int, Dict[str, int]]:
     """Daily alert counts for the last 7 days, for many rules in ONE query.
 
@@ -102,7 +139,7 @@ def _rule_to_response(rule: Rule, db: Session = None, counts_by_day: Dict[str, i
     if rule.stages:
         try:
             stages = json.loads(rule.stages)
-        except:
+        except Exception:
             pass
 
     nodes = []
@@ -113,21 +150,21 @@ def _rule_to_response(rule: Rule, db: Session = None, counts_by_day: Dict[str, i
             if nodes and isinstance(nodes, list) and isinstance(nodes[0], dict) and "index" in nodes[0]:
                 stages = nodes
                 nodes = []
-        except:
+        except Exception:
             pass
 
     output_mapping = {}
     if rule.output_mapping:
         try:
             output_mapping = json.loads(rule.output_mapping)
-        except:
+        except Exception:
             pass
 
     actions = []
     if rule.actions:
         try:
             actions = json.loads(rule.actions)
-        except:
+        except Exception:
             pass
 
     # 告警趋势（最近7天）。counts_by_day 可由调用方批量预取，避免 N+1。
@@ -159,7 +196,7 @@ def _rule_to_response(rule: Rule, db: Session = None, counts_by_day: Dict[str, i
         "stages": stages,
         "output_mapping": output_mapping,
         "nodes": nodes,
-        "actions": actions
+        "actions": _redact_actions(actions)
     }
 
 
@@ -222,7 +259,7 @@ async def es_indices(
 async def es_preview(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """
     ES query preview (supports both old and new format)
@@ -267,6 +304,48 @@ async def es_preview(
         return JSONResponse(status_code=500, content=orjson.loads(orjson.dumps({"code": 500, "msg": str(e), "data": None})))
 
 
+@router.post("/telegram-test", response_model=Response[Dict[str, Any]])
+async def telegram_test(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin", "operator"))
+):
+    """用当前表单里填的凭据发一条测试消息，不落库。
+
+    让用户在保存规则之前就知道 token/chat_id 对不对 —— 否则只能等规则跑完
+    才发现推送一直静默失败。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return Response(code=400, msg="请求体不是合法 JSON")
+
+    bot_token = (body.get("bot_token") or "").strip()
+    chat_id = (str(body.get("chat_id") or "")).strip()
+    # 留空表示沿用已保存的凭据（前端编辑时拿不到明文 token，只拿到 bot_token_set）
+    if not bot_token and body.get("rule_id"):
+        saved = db.query(Rule).filter(Rule.id == body["rule_id"]).first()
+        if saved and saved.actions:
+            try:
+                for a in json.loads(saved.actions):
+                    if a.get("type") == "telegram" and (a.get("bot_token") or "").strip():
+                        bot_token = a["bot_token"].strip()
+                        break
+            except Exception:
+                pass
+
+    from app.services.telegram_notify import send_telegram
+
+    ok, err = send_telegram(
+        bot_token,
+        chat_id,
+        "✅ 安全巡检平台 Telegram 推送测试成功",
+    )
+    if ok:
+        return Response(msg="测试消息已发送，请查看 Telegram")
+    return Response(code=400, msg=f"发送失败：{err}")
+
+
 # ==================== CRUD Routes ====================
 
 
@@ -275,7 +354,7 @@ async def list_rules(
     keyword: str = Query(default=""),
     is_enabled: str = Query(default=""),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=10, le=200),
+    page_size: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -312,11 +391,12 @@ async def list_rules(
 async def create_rule(
     request: RuleCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """Create a new rule"""
-    # 注入危险等级到 actions
-    actions = _inject_severity(request.actions, request.severity, request.severity_conditions if hasattr(request, "severity_conditions") else [])
+    # 注入危险等级到 actions。severity_conditions 是**每个 action 自己**的字段，
+    # 不是 RuleCreate 顶层的 —— 早先那个 hasattr(...) 永远为 False，死代码。
+    actions = _inject_severity(request.actions, request.severity)
     rule = Rule(
         name=request.name,
         description=request.description,
@@ -334,9 +414,9 @@ async def create_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    
-    # TODO: Add to scheduler if interval/cron
-    
+
+    # 调度器是独立进程（run_scheduler.py），这里够不着它的内存 JobStore。
+    # 由 SchedulerService.reconcile 在下一个 tick 收敛，见 scheduler_service.py。
     return Response(msg="规则创建成功", data=_rule_to_response(rule, db))
 
 
@@ -359,7 +439,7 @@ async def update_rule(
     rule_id: int,
     request: RuleUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """Update rule"""
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
@@ -402,6 +482,12 @@ async def update_rule(
             else:
                 a_dict = dict(a)
             actions_list.append(a_dict)
+        # bot_token 留空 = 保持原值（前端拿不到明文，只能这样表达「没改」）
+        try:
+            old_actions = json.loads(rule.actions) if rule.actions else []
+        except Exception:
+            old_actions = []
+        actions_list = _merge_telegram_secret(actions_list, old_actions)
         update_data["actions"] = json.dumps(
             _inject_severity(actions_list, request.severity or "medium"),
             ensure_ascii=False
@@ -412,9 +498,8 @@ async def update_rule(
     
     db.commit()
     db.refresh(rule)
-    
-    # TODO: Update scheduler
-    
+
+    # 同上：调度参数的变更由 SchedulerService.reconcile 收敛
     return Response(msg="规则更新成功", data=_rule_to_response(rule, db))
 
 
@@ -422,18 +507,17 @@ async def update_rule(
 async def delete_rule(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """Delete rule"""
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
     if not rule:
         return Response(code=404, msg="规则不存在")
-    
-    # TODO: Remove from scheduler
-    
+
+    # 同上：残留 job 由 SchedulerService.reconcile 清理
     db.delete(rule)
     db.commit()
-    
+
     return Response(msg="删除成功")
 
 
@@ -441,7 +525,7 @@ async def delete_rule(
 async def run_rule(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """Run rule (preview ES results, no write)"""
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
@@ -459,7 +543,7 @@ async def run_rule(
             try:
                 stages = json.loads(rule.stages)
                 output_mapping = json.loads(rule.output_mapping) if rule.output_mapping else {}
-            except:
+            except Exception:
                 pass
         
         if stages:
@@ -480,7 +564,7 @@ async def run_rule(
 async def execute_rule_endpoint(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """执行规则（含 actions 写 MySQL）"""
     from datetime import datetime
@@ -508,19 +592,19 @@ async def execute_rule_endpoint(
         results = reverse_output_mapping(output_mapping, results)
 
         actions = json.loads(rule.actions or "[]")
-        # Add rule metadata to actions for create_alert
+        # 给每个动作带上规则元数据。create_alert 和 telegram 都要规则名，
+        # write_mysql 忽略这几个键也没副作用。
         for act in actions:
-            if act.get("type") == "create_alert":
-                act["_rule_id"] = rule.id
-                act["_rule_name"] = rule.name
-                act["_rule_severity"] = getattr(rule, "severity", "medium")
+            act["_rule_id"] = rule.id
+            act["_rule_name"] = rule.name
+            act["_rule_severity"] = getattr(rule, "severity", "medium")
         executor = RuleExecutor(db)
         written = executor.process_actions(actions, results)
 
         # 存储触发告警的ES原始日志
-        if executor.last_alert_count > 0 and stages:
+        if executor.created_alert_ids and stages:
             from app.services.scheduler_service import _store_raw_logs_for_alerts
-            _store_raw_logs_for_alerts(db, es, stages, rule.id)
+            _store_raw_logs_for_alerts(db, es, stages, executor.created_alert_ids)
 
         rule.last_run = local_now()
         rule.run_count = (rule.run_count or 0) + 1

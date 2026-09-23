@@ -75,7 +75,7 @@
                 <el-option label="<=" value="lte" />
               </el-select>
               <el-input-number v-model="stage.aggregation.having.value" :min="0" style="width:120px;margin-left:8px" />
-              <span style="margin-left:8px;color:#888;font-size:12px">只保留满足条件的分组</span>
+              <span style="margin-left:8px;color:var(--el-text-color-secondary);font-size:12px">只保留满足条件的分组</span>
             </el-form-item>
           </el-col>
         </el-row>
@@ -136,8 +136,8 @@ const priorStages = computed(() => props.stages.slice(0, props.stageIdx))
 
 <style lang="scss" scoped>
 .stage-card {
-  background: #f7f8fa;
-  border: 1px solid #e8e8e8;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   padding: 16px;
   transition: box-shadow 0.2s;
@@ -150,7 +150,7 @@ const priorStages = computed(() => props.stages.slice(0, props.stageIdx))
   align-items: center;
   margin-bottom: 12px;
   padding-bottom: 8px;
-  border-bottom: 1px dashed #e0e0e0;
+  border-bottom: 1px dashed var(--el-border-color-extra-light);
 }
 
 .stage-title {
@@ -172,7 +172,7 @@ const priorStages = computed(() => props.stages.slice(0, props.stageIdx))
 
 .aggregation-config, .join-config {
   margin-top: 8px;
-  background: #fff;
+  background: var(--el-bg-color);
   border-radius: 6px;
   padding: 12px;
 }

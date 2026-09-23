@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.models.base import init_db, get_db
 from app.api import auth, addresses, rules, alerts, settings as settings_api
+from app.api.dashboard import router as dashboard_router
 from app.api.security import get_current_user
 from app.api.inspect import router as inspect_router
 from app.api.reports import router as reports_router
@@ -81,6 +82,27 @@ def _seed_system_config() -> None:
                 ("grafana_api_key", "", "Grafana API Key", "API Key（可选）", "grafana"),
                 ("grafana_user", "", "Grafana 用户名", "Basic Auth 用户名（可选）", "grafana"),
                 ("grafana_password", "", "Grafana 密码", "Basic Auth 密码（可选）", "grafana"),
+                # 安全策略。早先这几项只在 settings 里兜底、从不进 SystemConfig，
+                # 于是 PUT /settings/config 会静默丢弃它们 —— 管理员改了却没生效。
+                ("login_max_attempts", "5", "登录失败锁定阈值",
+                 "连续失败多少次后锁定账号（需重启生效）", "security"),
+                ("login_lockout_minutes", "15", "登录锁定时长（分钟）",
+                 "锁定多少分钟后自动解锁（需重启生效）", "security"),
+                ("virustotal_api_key", "", "VirusTotal API Key",
+                 "可选；配置后告警详情可查 IP 信誉", "security"),
+                # 数据保留（天）。0 = 不清理。每日 03:17 由调度器执行。
+                ("retention_ingest_logs_days", "30", "推送数据保留（天）",
+                 "ingest_logs 超过该天数自动删除；0 = 不清理", "retention"),
+                ("retention_execution_logs_days", "30", "规则执行记录保留（天）",
+                 "0 = 不清理", "retention"),
+                ("retention_operation_logs_days", "90", "操作日志保留（天）",
+                 "0 = 不清理", "retention"),
+                ("retention_login_logs_days", "90", "登录日志保留（天）",
+                 "0 = 不清理", "retention"),
+                ("retention_remote_executions_days", "30", "远程执行结果保留（天）",
+                 "0 = 不清理", "retention"),
+                ("retention_alerts_resolved_days", "180", "已结束告警保留（天）",
+                 "只清 resolved / false_positive；pending/confirmed 不动。0 = 不清理", "retention"),
             ]
             for _key, _val, _label, _desc, _grp in _defaults:
                 if not _cfg_db.query(SystemConfig).filter(SystemConfig.key == _key).first():
@@ -140,6 +162,7 @@ app.include_router(addresses.router, prefix="/api")
 app.include_router(rules.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(settings_api.router, prefix="/api")
+app.include_router(dashboard_router, prefix="/api")
 app.include_router(execution_logs_router, prefix="/api")
 app.include_router(logs_router, prefix="/api")
 app.include_router(reports_router)
@@ -165,8 +188,12 @@ def health(db=Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
         db_ok = True
-    except Exception as exc:
-        return {"status": "degraded", "database": f"error: {exc}"}
+    except Exception:
+        # /health 无需鉴权。把异常原文吐出去等于给外人一份连接串/驱动栈。
+        # 只报「挂了」，细节进日志。
+        import logging
+        logging.getLogger("app.health").exception("database liveness probe failed")
+        return {"status": "degraded", "database": "error"}
     return {"status": "healthy", "database": "ok" if db_ok else "unknown"}
 
 

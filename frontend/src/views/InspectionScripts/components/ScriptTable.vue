@@ -88,7 +88,7 @@ const emit = defineEmits(['edit', 'delete', 'run-selected'])
 .exec-bar {
   padding: 16px;
   margin-top: 16px;
-  background: #f0f9eb;
+  background: var(--el-color-success-light-9);
   border-radius: 8px;
   display: flex;
   justify-content: center;

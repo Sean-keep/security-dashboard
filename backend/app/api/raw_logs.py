@@ -142,26 +142,21 @@ async def query_raw_logs(
         elif request.conditions:
             # 可视化条件查询
             must_clauses = list(time_clauses)
-            must_not_clauses = []
 
             if request.logic == "AND":
                 for cond in request.conditions:
-                    if cond.field == "_all" and cond.operator in ("not_equals", "not_contains"):
-                        must_not_clauses.append(_build_condition_clause(cond))
-                    else:
-                        must_clauses.append(_build_condition_clause(cond))
+                    # _build_condition_clause 对否定操作符已经返回自带
+                    # bool.must_not 的子句。这里必须放进 must —— 早先把
+                    # _all 的否定再塞进 must_not 会双重否定，变成匹配命中集。
+                    must_clauses.append(_build_condition_clause(cond))
             else:
                 should_clauses = [_build_condition_clause(c) for c in request.conditions]
                 must_clauses.append({"bool": {"should": should_clauses, "minimum_should_match": 1}})
 
-            bool_query = {"must": must_clauses}
-            if must_not_clauses:
-                bool_query["must_not"] = must_not_clauses
-
             body = {
                 "size": request.page_size,
                 "from": (request.page - 1) * request.page_size,
-                "query": {"bool": bool_query},
+                "query": {"bool": {"must": must_clauses}},
                 "sort": [{"@timestamp": {"order": "desc"}}],
                 "track_total_hits": True
             }
@@ -178,7 +173,9 @@ async def query_raw_logs(
             "total": total,
             "records": records,
             "page": request.page,
-            "page_size": request.page_size
+            "page_size": request.page_size,
+            # ES 自己的查询耗时（毫秒）。前端不再用 Date.now() 差值冒充服务端耗时。
+            "took": result.get("took"),
         })
 
     except Exception as e:
@@ -190,7 +187,7 @@ async def query_raw_logs(
                 m = re.search(r'"reason":"(.*?)"', err)
                 if m:
                     err = m.group(1)
-            except:
+            except Exception:
                 pass
         return Response(code=500, msg=f"查询失败: {err}")
 

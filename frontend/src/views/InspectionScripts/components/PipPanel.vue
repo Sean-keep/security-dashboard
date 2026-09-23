@@ -102,27 +102,27 @@ const emit = defineEmits(['update:installName', 'install', 'refresh', 'uninstall
 }
 
 .pip-ok {
-  background: #f0f9eb;
-  color: #67c23a;
+  background: var(--el-color-success-light-9);
+  color: var(--el-color-success);
 }
 
 .pip-err {
-  background: #fef0f0;
-  color: #f56c6c;
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
 }
 
 .pip-list-container {
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   overflow: hidden;
 }
 
 .pip-list-header {
   padding: 12px 16px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   font-weight: 600;
   font-size: 14px;
-  border-bottom: 1px solid #e4e7ed;
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .pip-list {
@@ -135,7 +135,7 @@ const emit = defineEmits(['update:installName', 'install', 'refresh', 'uninstall
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
   transition: background 0.2s;
 }
 
@@ -144,7 +144,7 @@ const emit = defineEmits(['update:installName', 'install', 'refresh', 'uninstall
 }
 
 .pip-item:hover {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
 }
 
 .pip-info {
@@ -156,11 +156,11 @@ const emit = defineEmits(['update:installName', 'install', 'refresh', 'uninstall
 .pip-name {
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-weight: 600;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 
 .pip-version {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 13px;
 }
 
@@ -170,7 +170,7 @@ const emit = defineEmits(['update:installName', 'install', 'refresh', 'uninstall
   justify-content: center;
   gap: 8px;
   padding: 40px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .pip-loading .el-icon {

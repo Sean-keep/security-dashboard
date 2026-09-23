@@ -61,7 +61,7 @@
                 :value="f"
               >
                 <span style="float: left">{{ f }}</span>
-                <span style="float: right; color: #8492a6; font-size: 12px">{{ type }}</span>
+                <span style="float: right; color: var(--el-text-color-secondary); font-size: 12px">{{ type }}</span>
               </el-option>
             </el-select>
 
@@ -216,22 +216,22 @@ const removeItem = (idx) => {
   display: flex;
   gap: 8px;
   padding: 16px;
-  background: #fafafa;
-  border: 2px dashed #dcdfe6;
+  background: var(--el-fill-color-light);
+  border: 2px dashed var(--el-border-color);
   border-radius: 8px;
   justify-content: center;
 }
 
 /* 条件组容器 */
 .condition-group {
-  border: 2px solid #e4e7ed;
+  border: 2px solid var(--el-border-color-light);
   border-radius: 8px;
   overflow: hidden;
 }
 
-.condition-group.logic-and { border-color: #409eff; }
-.condition-group.logic-or { border-color: #e6a23c; }
-.condition-group.logic-not { border-color: #f56c6c; }
+.condition-group.logic-and { border-color: var(--el-color-primary); }
+.condition-group.logic-or { border-color: var(--el-color-warning); }
+.condition-group.logic-not { border-color: var(--el-color-danger); }
 
 /* 组头部 */
 .group-header {
@@ -239,13 +239,15 @@ const removeItem = (idx) => {
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  background: #f5f7fa;
-  border-bottom: 1px solid #e4e7ed;
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
-.logic-and .group-header { background: #ecf5ff; border-bottom-color: #b3d8ff; }
-.logic-or .group-header { background: #fdf6ec; border-bottom-color: #f5dab1; }
-.logic-not .group-header { background: #fef0f0; border-bottom-color: #fbc4c4; }
+/* 逻辑组着色统一走 Element Plus 的语义色淡档：底 -9 / 描边 -5。
+ * 原先手写的 #ecf5ff / #f0f9ff / #f5dab1 / #fbc4c4 就是这些 token 的取值。 */
+.logic-and .group-header { background: var(--el-color-primary-light-9); border-bottom-color: var(--el-color-primary-light-5); }
+.logic-or .group-header { background: var(--el-color-warning-light-9); border-bottom-color: var(--el-color-warning-light-5); }
+.logic-not .group-header { background: var(--el-color-danger-light-9); border-bottom-color: var(--el-color-danger-light-5); }
 
 .logic-select {
   width: 120px;
@@ -269,13 +271,13 @@ const removeItem = (idx) => {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: #fff;
-  border: 1px solid #dcdfe6;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
   border-radius: 6px;
 }
 
 .condition-row:hover {
-  border-color: #c0c4cc;
+  border-color: var(--el-text-color-placeholder);
 }
 
 .field-select { width: 180px; }
@@ -290,7 +292,7 @@ const removeItem = (idx) => {
 /* 空状态 */
 .empty-hint {
   text-align: center;
-  color: #c0c4cc;
+  color: var(--el-text-color-placeholder);
   padding: 12px;
   font-size: 13px;
 }
@@ -300,11 +302,11 @@ const removeItem = (idx) => {
   display: flex;
   gap: 8px;
   padding: 8px 12px;
-  background: #fafafa;
-  border-top: 1px solid #ebeef5;
+  background: var(--el-fill-color-light);
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
-.logic-and .group-footer { background: #f0f9ff; }
-.logic-or .group-footer { background: #fdf6ec; }
-.logic-not .group-footer { background: #fef0f0; }
+.logic-and .group-footer { background: var(--el-color-primary-light-9); }
+.logic-or .group-footer { background: var(--el-color-warning-light-9); }
+.logic-not .group-footer { background: var(--el-color-danger-light-9); }
 </style>

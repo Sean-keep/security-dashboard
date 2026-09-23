@@ -15,5 +15,8 @@ class IngestEndpoint(Base):
     # Shared secret presented by the source as X-Ingest-Token. create_all() adds
     # the column on bootstrap; live upgrades need the migration in docs/.
     token = Column(String(64), nullable=True, index=True, comment='推送密钥（X-Ingest-Token）')
+    # 存活信号：没有它就分不清「agent 挂了」和「本来就没数据」。
+    # 与 scheduler_heartbeat 同一个思路 —— 时间戳变陈旧即视为静默。
+    last_received_at = Column(DateTime, nullable=True, comment='最近一次成功接收时间')
     created_at = Column(DateTime, default=local_now)
     updated_at = Column(DateTime, default=local_now, onupdate=local_now)

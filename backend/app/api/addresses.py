@@ -19,7 +19,7 @@ from app.models.base import get_db
 from app.models.address import Address
 from app.schemas.address import AddressCreate, AddressUpdate, AddressResponse
 from app.schemas.common import Response, PaginatedResponse, PaginatedData
-from app.api.security import get_current_user
+from app.api.security import get_current_user, require_roles
 from app.models.user import User
 
 
@@ -267,7 +267,7 @@ async def export_addresses(
 async def create_address(
     request: AddressCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """Create a new address — 入库时若 country 为空则自动通过 ipinfo.io 查询 IP 国家归属"""
     country = request.country
@@ -310,7 +310,7 @@ async def update_address(
     addr_id: int,
     request: AddressUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     addr = db.query(Address).filter(Address.id == addr_id).first()
     if not addr:
@@ -327,7 +327,7 @@ async def update_address(
 async def delete_address(
     addr_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     addr = db.query(Address).filter(Address.id == addr_id).first()
     if not addr:
@@ -341,7 +341,7 @@ async def delete_address(
 async def batch_delete(
     request: BatchDeleteRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     ids = request.ids
     if not ids:
@@ -355,7 +355,7 @@ async def batch_delete(
 async def batch_lookup_country(
     request: BatchCountryLookupRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """批量查询地址国家归属，查到后写入 MySQL（只更新 country 为空的记录）"""
     ids = request.ids
@@ -381,7 +381,7 @@ async def batch_lookup_country(
 @router.post("/migrate-countries", response_model=Response)
 async def migrate_countries(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
     """一次性迁移：将所有历史 ISO 国家码（如 US/DE/CN）翻译为中文名。"""
     all_addresses = db.query(Address).filter(Address.country != None, Address.country != "").all()

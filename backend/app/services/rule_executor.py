@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timedelta
 
@@ -8,6 +9,12 @@ from app.models.alert import Alert
 from app.models.rule import Rule
 from app.models.execution_log import RuleExecutionLog
 from app.api.addresses import _lookup_country_single
+
+# 同一 (rule, src_ip, title) 在这个窗口里只产生一条告警；窗口过后再命中算
+# 「又一次事件」，开新行并重新推送。规则可用 action.dedup_cooldown 覆盖。
+DEFAULT_DEDUP_COOLDOWN_SECONDS = 900
+
+_SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
 def record_execution_log(db, rule_id, rule_name="", alert_count=0, detail=None,
@@ -202,11 +209,22 @@ class RuleExecutor:
         # 最近一次 process_actions 的分类计数
         self.last_mysql_written = 0
         self.last_alert_count = 0
+        self.last_telegram_sent = 0
+        # 一次 process_actions 内共享的去重裁决：fingerprint -> (alert, is_transition)。
+        # create_alert 与 telegram 必须看到同一份裁决，否则「同一命中先建告警再推 TG」
+        # 会被当成重复而静音。
+        self._claims = {}
+        # 本执行器新建的告警 id，给 _store_raw_logs_for_alerts 精确用 —— 早先那个
+        # 函数靠「最近 1 分钟 + 同 src_ip」猜，一份 500 条的 ES JSON 会写进同 IP 的
+        # 所有告警。刻意不在 process_actions 里清零：一个执行器可能跑多个 action。
+        self.created_alert_ids = []
 
     def process_actions(self, actions, es_results):
         written = 0
         self.last_mysql_written = 0
         self.last_alert_count = 0
+        self.last_telegram_sent = 0
+        self._claims = {}
         for action in actions:
             action_type = action.get("type", "")
             if action_type == "write_mysql":
@@ -217,7 +235,72 @@ class RuleExecutor:
                 n = self._create_alert(action, es_results)
                 self.last_alert_count += n
                 written += n
+            elif action_type == "telegram":
+                n = self._push_telegram(action, es_results)
+                self.last_telegram_sent += n
+                written += n
         return written
+
+    def _push_telegram(self, action, results):
+        """把命中结果推送到 Telegram。
+
+        文案与 create_alert 共用 render_alert_template，所以 TG 里收到的和
+        告警列表里的内容一致。失败只记日志不抛出：推送不该把整条规则判失败。
+        """
+        try:
+            from app.services.telegram_notify import (
+                TELEGRAM_MAX_MESSAGES_PER_RUN,
+                build_alert_message,
+                send_telegram,
+            )
+        except ImportError as exc:
+            # 缺 httpx 之类的依赖时跳过推送，不要把整条规则执行判失败
+            print(f"[RuleExecutor] Telegram push unavailable: {exc}")
+            return 0
+
+        if not results:
+            return 0
+
+        bot_token = action.get("bot_token", "")
+        chat_id = action.get("chat_id", "")
+        template = action.get("template", "")
+        title_template = action.get("title_template", "")
+        severity = action.get("severity", "medium")
+        rule_name = action.get("_rule_name", "")
+
+        sent = 0
+        for i, result in enumerate(results):
+            if sent >= TELEGRAM_MAX_MESSAGES_PER_RUN:
+                print(f"[RuleExecutor] Telegram push capped at {TELEGRAM_MAX_MESSAGES_PER_RUN}, "
+                      f"skipping {len(results) - i} remaining")
+                break
+
+            ip = result.get("src_ip", result.get("ip_address", result.get("攻击地址", "")))
+            # 只在「状态跃迁」时推：新事件、或冷却窗口外的再次发生。
+            # 冷却窗口里的重复只抬计数，不骚扰人。
+            # create_row=True：TG-only 的规则也必须把去重态落库，否则冷却判断
+            # 无从查起，每分钟都会重推同一条。
+            _, is_transition = self._claim(result, action, create_row=True)
+            if not is_transition:
+                continue
+
+            content_text = self._render_content(action, result, ip)
+            title = self._render_title(action, result, ip, rule_name)
+
+            text = build_alert_message(
+                title=title,
+                content=content_text,
+                severity=severity,
+                src_ip=str(ip or ""),
+                rule_name=rule_name,
+                created_at=local_now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            ok, err = send_telegram(bot_token, chat_id, text)
+            if ok:
+                sent += 1
+            else:
+                print(f"[RuleExecutor] Telegram push failed: {err}")
+        return sent
 
     def _write_mysql(self, action, results):
         table = action.get("table", "")
@@ -397,58 +480,146 @@ class RuleExecutor:
             return str(target) in str(actual)
         return False
 
-    def _create_alert(self, action, results):
-        if not results:
-            return 0
+    # ── 去重 / 白名单 ──────────────────────────────────────────────
+
+    @staticmethod
+    def _alert_fingerprint(rule_id, ip, title) -> str:
+        raw = f"{rule_id or 0}|{ip or ''}|{title or ''}"
+        return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+
+    def _is_whitelisted(self, ip) -> bool:
+        """地址簿里标了 whitelist 的源 IP 直接吞掉 —— 那是人工说过的「这不是攻击」。"""
+        if not ip:
+            return False
+        return (
+            self.db_session.query(Address.id)
+            .filter(Address.ip_address == ip, Address.status == "whitelist")
+            .first()
+            is not None
+        )
+
+    def _open_duplicate(self, fingerprint, cooldown_seconds):
+        if not fingerprint:
+            return None
+        cutoff = local_now() - timedelta(seconds=cooldown_seconds)
+        return (
+            self.db_session.query(Alert)
+            .filter(
+                Alert.fingerprint == fingerprint,
+                Alert.status.in_(("pending", "confirmed")),
+                # 旧行可能只有 created_at（迁移前），两者都看，取更保守的那个
+                # 不行 —— 取「最近一次出现」，也就是 max(last_seen_at, created_at)。
+                # 简化成 last_seen_at >= cutoff，因为迁移会把 last_seen_at 回填成
+                # created_at。
+                Alert.last_seen_at >= cutoff,
+            )
+            .order_by(Alert.id.desc())
+            .first()
+        )
+
+    def _claim(self, result, action, create_row: bool):
+        """一次命中的去重裁决，create_alert 与 telegram 共用。
+
+        返回 ``(alert, is_transition)``。
+          * ``is_transition=True``  → 新事件：建行（如果 create_row）并推送
+          * ``is_transition=False`` → 冷却窗口内的重复：只抬计数，不推送
+        白名单命中返回 ``(None, False)``。
+        """
         rule_id = action.get("_rule_id")
         rule_name = action.get("_rule_name", "")
         rule_severity = action.get("severity", "medium")
         conditions = action.get("severity_conditions", [])
-        db = self.db_session
-        count = 0
-        for result in results:
-            ip = result.get("src_ip", result.get("ip_address", result.get("攻击地址", "")))
-            # 域名：取第一个非空、非 0 的值；关联 stage 查不到时可能为 0/空
-            _raw_domain = result.get("server_name", result.get("domain", result.get("攻击域名", "")))
-            domain = _raw_domain if _raw_domain not in (None, "", 0, "0") else ""
-            template = action.get("template", "")
-            if template:
-                content_text = render_alert_template(template, result)
-            else:
-                content_text = f"检测到 {ip} 攻击 {domain or '未知域名'}"
-            title_template = action.get("title_template", "")
-            if title_template:
-                title = render_alert_template(title_template, result)
-            elif rule_name:
-                title = f"告警: {rule_name}"
-            else:
-                title = f"规则告警: {ip}"
-            # 逐条评估危险等级
-            final_severity = self._evaluate_severity(result, rule_severity, conditions)
+        ip = result.get("src_ip", result.get("ip_address", result.get("攻击地址", "")))
+        title = self._render_title(action, result, ip, rule_name)
+        fp = self._alert_fingerprint(rule_id, ip, title)
+        if fp in self._claims:
+            return self._claims[fp]
+
+        if self._is_whitelisted(ip):
+            self._claims[fp] = (None, False)
+            return None, False
+
+        cooldown = int(action.get("dedup_cooldown") or DEFAULT_DEDUP_COOLDOWN_SECONDS)
+        existing = self._open_duplicate(fp, cooldown)
+        now = local_now()
+        hits = int(result.get("count", 1) or 1)
+        final_severity = self._evaluate_severity(result, rule_severity, conditions)
+
+        if existing is not None:
+            existing.event_count = (existing.event_count or 0) + hits
+            existing.last_seen_at = now
+            # 重复命中里的更高危等级要往上抬，否则一条 critical 会被后续 medium 淹掉
+            if _SEVERITY_RANK.get(final_severity, 0) > _SEVERITY_RANK.get(existing.severity, 0):
+                existing.severity = final_severity
+            self._claims[fp] = (existing, False)
+            return existing, False
+
+        alert = None
+        if create_row:
             alert = Alert(
                 rule_id=rule_id,
                 rule_name=rule_name,
                 title=title,
-                content=content_text,
-                event_count=result.get("count", 1),
+                content=self._render_content(action, result, ip),
+                event_count=hits,
                 severity=final_severity,
                 src_ip=ip,
                 status="pending",
-                raw_log=json.dumps(result, ensure_ascii=False, indent=2)
+                fingerprint=fp,
+                last_seen_at=now,
+                created_at=now,
+                raw_log=json.dumps(result, ensure_ascii=False, indent=2),
             )
-            db.add(alert)
-            count += 1
-            # 同步更新地址表的威胁等级（取更高优先级）
-            if ip and final_severity:
-                priority = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-                from app.models.address import Address
-                addr = db.query(Address).filter(Address.ip_address == ip).order_by(Address.created_at.desc()).first()
-                if addr:
-                    cur = priority.get(addr.severity, 1)
-                    new = priority.get(final_severity, 1)
-                    if new > cur:
-                        addr.severity = final_severity
-        db.commit()
+            self.db_session.add(alert)
+            self.db_session.flush()
+            if alert.id and alert.id not in self.created_alert_ids:
+                self.created_alert_ids.append(alert.id)
+        self._claims[fp] = (alert, True)
+        return alert, True
+
+    @staticmethod
+    def _render_title(action, result, ip, rule_name) -> str:
+        title_template = action.get("title_template", "")
+        if title_template:
+            return render_alert_template(title_template, result)
+        if rule_name:
+            return f"告警: {rule_name}"
+        return f"规则告警: {ip}"
+
+    @staticmethod
+    def _render_content(action, result, ip) -> str:
+        template = action.get("template", "")
+        if template:
+            return render_alert_template(template, result)
+        _raw_domain = result.get("server_name", result.get("domain", result.get("攻击域名", "")))
+        domain = _raw_domain if _raw_domain not in (None, "", 0, "0") else ""
+        return f"检测到 {ip} 攻击 {domain or '未知域名'}"
+
+    def _sync_address_severity(self, ip, final_severity):
+        """地址簿的威胁等级取更高优先级（low < medium < high < critical）。"""
+        if not ip or not final_severity:
+            return
+        addr = (
+            self.db_session.query(Address)
+            .filter(Address.ip_address == ip)
+            .order_by(Address.created_at.desc())
+            .first()
+        )
+        if not addr:
+            return
+        if _SEVERITY_RANK.get(final_severity, 0) > _SEVERITY_RANK.get(addr.severity, 0):
+            addr.severity = final_severity
+
+    def _create_alert(self, action, results):
+        if not results:
+            return 0
+        count = 0
+        for result in results:
+            alert, is_transition = self._claim(result, action, create_row=True)
+            if alert is not None and is_transition:
+                count += 1
+                self._sync_address_severity(alert.src_ip, alert.severity)
+        self.db_session.commit()
         return count
 
     def _resolve_field(self, path, record):

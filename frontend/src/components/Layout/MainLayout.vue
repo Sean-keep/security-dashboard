@@ -5,7 +5,7 @@
       <div class="logo-area">
         <div class="logo-icon">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#409EFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path class="logo-mark" d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </div>
         <transition name="fade">
@@ -19,9 +19,6 @@
         :collapse-transition="false"
         router
         class="sidebar-menu"
-        background-color="#1a1a2e"
-        text-color="#b0b0c3"
-        active-text-color="#409EFF"
       >
         <!-- 一级固定菜单-->
         <el-menu-item index="/dashboard">
@@ -46,7 +43,7 @@
         </el-menu-item>
 
         <!-- 日常巡检（父级，点击后展开子项）-->
-        <el-sub-menu v-if="!isCollapse" :default-active="activeMenu" :default-openeds="defaultOpeneds" :popper-class="'dark-popper'">
+        <el-sub-menu v-if="!isCollapse" :default-active="activeMenu" :default-openeds="defaultOpeneds" :popper-class="'menu-popper'">
           <template #title>
             <el-icon><Monitor /></el-icon>
             <span>日常巡检</span>
@@ -61,7 +58,7 @@
           </el-menu-item>
           <el-menu-item index="/remote">
             <span class="sub-dot">·</span>
-            <template #title>远程执行</template>
+            <template #title>远程接收</template>
           </el-menu-item>
           <el-menu-item index="/inspection/metrics">
             <span class="sub-dot">·</span>
@@ -72,7 +69,7 @@
         <!-- 折叠状态下的日常巡检 -->
         <el-menu-item v-if="isCollapse" index="/remote">
           <el-icon><Monitor /></el-icon>
-          <template #title>远程执行</template>
+          <template #title>远程接收</template>
         </el-menu-item>
         <el-menu-item v-if="isCollapse" index="/inspection/scripts">
           <el-icon><Monitor /></el-icon>
@@ -80,7 +77,7 @@
         </el-menu-item>
 
         <!-- 系统设置（父级，点击后展开子项）-->
-        <el-sub-menu v-if="!isCollapse" :default-active="activeMenu" :default-openeds="defaultOpeneds" :popper-class="'dark-popper'">
+        <el-sub-menu v-if="!isCollapse" :default-active="activeMenu" :default-openeds="defaultOpeneds" :popper-class="'menu-popper'">
           <template #title>
             <el-icon><Tools /></el-icon>
             <span>系统设置</span>
@@ -128,8 +125,8 @@
           <el-tooltip placement="bottom" :disabled="!schedulerJobs.length">
             <template #content>
               <div v-for="job in schedulerJobs" :key="job.id" style="padding:2px 0;">
-                <span style="color:#67c23a;">●</span> {{ job.name }}
-                <span v-if="job.next_run" style="color:#909399;margin-left:6px;">下次: {{ job.next_run }}</span>
+                <span style="color: var(--el-color-success);">●</span> {{ job.name }}
+                <span v-if="job.next_run" style="color: var(--el-text-color-secondary); margin-left: 6px;">下次: {{ job.next_run }}</span>
               </div>
             </template>
             <div class="scheduler-status">
@@ -139,7 +136,7 @@
           </el-tooltip>
           <el-dropdown @command="handleUserCommand">
             <span class="user-info">
-              <el-avatar :size="32" style="background:#409EFF">
+              <el-avatar :size="32" style="background: var(--el-color-primary);">
                 {{ userStore.userInfo.nickname?.[0] || 'A' }}
               </el-avatar>
               <span class="username">{{ userStore.userInfo.nickname || userStore.userInfo.username }}</span>
@@ -299,8 +296,8 @@ const submitChangePwd = async () => {
 .main-layout { height: 100vh; overflow: hidden; }
 
 .layout-aside {
-  background: #1a1a2e;
-  border-right: 1px solid #2a2a4e;
+  background: var(--el-bg-color);
+  border-right: 1px solid var(--el-border-color-light);
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   overflow-x: hidden;
   display: flex;
@@ -313,23 +310,33 @@ const submitChangePwd = async () => {
   align-items: center;
   padding: 0 16px;
   gap: 10px;
-  border-bottom: 1px solid #2a2a4e;
+  border-bottom: 1px solid var(--el-border-color-light);
   flex-shrink: 0;
 }
 .logo-icon { flex-shrink: 0; display: flex; align-items: center; }
-.logo-text { font-size: 15px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; }
+.logo-mark { stroke: var(--el-color-primary); fill: none; }
+.logo-text { font-size: 15px; font-weight: 600; color: var(--el-text-color-primary); white-space: nowrap; overflow: hidden; }
 
 .sidebar-menu {
   border-right: none;
   flex: 1;
-  background: #1a1a2e !important;
+  background: transparent !important;
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: var(--el-text-color-regular);
+  --el-menu-active-color: var(--el-color-primary);
+  --el-menu-hover-bg-color: var(--el-fill-color-light);
   :deep(.el-menu-item) {
     height: 46px;
     line-height: 46px;
     margin: 1px 8px;
     border-radius: 8px;
-    &:hover { background: #252542 !important; }
-    &.is-active { background: rgba(64,158,255,0.15) !important; color: #409EFF !important; }
+    color: var(--el-text-color-regular);
+    &:hover { background: var(--el-fill-color-light) !important; }
+    &.is-active {
+      background: var(--el-color-primary-light-9) !important;
+      color: var(--el-color-primary) !important;
+      font-weight: 600;
+    }
   }
   :deep(.el-sub-menu) {
     .el-sub-menu__title {
@@ -338,10 +345,12 @@ const submitChangePwd = async () => {
       margin: 1px 8px;
       border-radius: 8px;
       padding: 0 20px 0 20px !important;
-      &:hover { background: #252542 !important; }
+      color: var(--el-text-color-regular);
+      &:hover { background: var(--el-fill-color-light) !important; }
     }
     &.is-active > .el-sub-menu__title {
-      color: #409EFF !important;
+      color: var(--el-color-primary) !important;
+      font-weight: 600;
     }
     .el-menu {
       background: transparent !important;
@@ -359,15 +368,15 @@ const submitChangePwd = async () => {
 .sub-dot {
   width: 16px;
   display: inline-block;
-  color: #555870;
+  color: var(--el-text-color-placeholder);
   font-size: 18px;
   line-height: 46px;
   text-align: center;
 }
 
 .layout-header {
-  background: #fff;
-  border-bottom: 1px solid #e8e8e8;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color-light);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -381,25 +390,25 @@ const submitChangePwd = async () => {
 .user-info {
   display: flex; align-items: center; gap: 8px; cursor: pointer;
   padding: 4px 8px; border-radius: 6px;
-  &:hover { background: #f5f5f5; }
+  &:hover { background: var(--el-fill-color-light); }
 }
-.username { font-size: 14px; color: #333; }
+.username { font-size: 14px; color: var(--el-text-color-primary); }
 
 .scheduler-status {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: 6px; cursor: default;
-  font-size: 13px; color: #606266;
-  &:hover { background: #f5f5f5; }
+  font-size: 13px; color: var(--el-text-color-regular);
+  &:hover { background: var(--el-fill-color-light); }
 }
 .status-dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-  &.online { background: #67c23a; box-shadow: 0 0 4px #67c23a80; }
-  &.offline { background: #f56c6c; box-shadow: 0 0 4px #f56c6c80; }
+  &.online { background: var(--el-color-success); box-shadow: 0 0 4px var(--el-color-success-light-5); }
+  &.offline { background: var(--el-color-danger); box-shadow: 0 0 4px var(--el-color-danger-light-5); }
 }
 .status-text { white-space: nowrap; }
 
 .layout-main {
-  background: #f0f2f5;
+  background: var(--page-bg);
   overflow-y: auto;
   padding: 20px;
 }
@@ -412,20 +421,25 @@ const submitChangePwd = async () => {
 </style>
 
 <style>
-/* 深色弹出菜单（el-sub-menu 展开时） */
-.dark-popper {
-  background: #1a1a2e !important;
-  border: 1px solid #2a2a4e !important;
+/* 子菜单弹出层（el-sub-menu 展开时）。与侧栏同为浅色主题。 */
+.menu-popper {
+  background: var(--el-bg-color) !important;
+  border: 1px solid var(--el-border-color-light) !important;
 }
-.dark-popper .el-menu {
+.menu-popper .el-menu {
   background: transparent !important;
 }
-.dark-popper .el-menu-item {
-  color: #b0b0c3 !important;
+.menu-popper .el-menu-item {
+  color: var(--el-text-color-regular) !important;
+  border-radius: 8px;
 }
-.dark-popper .el-menu-item:hover,
-.dark-popper .el-menu-item.is-active {
-  background: rgba(64,158,255,0.15) !important;
-  color: #409EFF !important;
+.menu-popper .el-menu-item:hover {
+  background: var(--el-fill-color-light) !important;
+  color: var(--el-text-color-primary) !important;
+}
+.menu-popper .el-menu-item.is-active {
+  background: var(--el-color-primary-light-9) !important;
+  color: var(--el-color-primary) !important;
+  font-weight: 600;
 }
 </style>

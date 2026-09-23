@@ -31,7 +31,12 @@ class Alert(Base):
 
     raw_log = Column(Text, default="")  # Raw log summary
     raw_logs = Column(LongText, default="")  # ES原始日志JSON数组
-    
+
+    # 去重键 = sha1(rule_id|src_ip|title)。同一个来源在冷却窗口里重复命中时
+    # 不再插新行，而是抬 event_count / last_seen_at。
+    fingerprint = Column(String(64), default="", index=True)
+    last_seen_at = Column(DateTime, default=datetime.now, index=True)
+
     created_at = Column(DateTime, default=datetime.now, index=True)
     confirmed_at = Column(DateTime, nullable=True)
     resolved_at = Column(DateTime, nullable=True)

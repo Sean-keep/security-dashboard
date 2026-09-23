@@ -8,7 +8,7 @@
   >
     <div v-if="loading" style="text-align:center;padding:40px">
       <el-icon class="is-loading" :size="32"><Loading /></el-icon>
-      <p style="margin-top:12px;color:#888">查询中...</p>
+      <p style="margin-top:12px;color:var(--el-text-color-secondary)">查询中...</p>
     </div>
     <div v-else-if="data.length">
       <el-alert :title="`查询结果：${data.length} 条`" type="success" :closable="false" style="margin-bottom:12px" />

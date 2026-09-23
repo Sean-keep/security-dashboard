@@ -48,6 +48,7 @@
         <div class="table-toolbar">
           <span>共 <strong>{{ total }}</strong> 条告警</span>
           <div class="toolbar-actions">
+            <el-button size="small" plain :loading="exporting" @click="exportCsv">导出CSV</el-button>
             <el-button size="small" type="danger" plain :disabled="!multipleSelection.length" @click="batchDeleteAlerts">批量删除</el-button>
             <el-button size="small" plain :disabled="!multipleSelection.length" @click="batchUpdate('confirmed')">批量确认</el-button>
             <el-button size="small" plain :disabled="!multipleSelection.length" @click="batchUpdate('resolved')">批量解决</el-button>
@@ -260,6 +261,34 @@ const onTimePresetChange = () => { pagination.page = 1; loadData() }
 const resetFilter = () => { Object.assign(filterForm, { keyword: '', severity: '', status: '' }); timePreset.value = 'today'; filterChange() }
 const onSelectionChange = (rows) => { multipleSelection.value = rows }
 
+// ── 导出 CSV（按当前筛选条件导出全部命中，不是当前页）──
+const exporting = ref(false)
+const exportCsv = async () => {
+  exporting.value = true
+  try {
+    const params = { ...buildDateRange() }
+    if (filterForm.keyword) params.keyword = filterForm.keyword
+    if (filterForm.severity) params.severity = filterForm.severity
+    if (filterForm.status) params.status = filterForm.status
+
+    const res = await alerts.exportCsv(params)
+    const blob = new Blob([res], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `alerts_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch (e) {
+    ElMessage.error('导出失败：' + (e.message || '未知错误'))
+  } finally {
+    exporting.value = false
+  }
+}
+
 const openDetail = async (row) => {
   try {
     const res = await alerts.get(row.id)
@@ -335,32 +364,32 @@ onMounted(loadData)
 .filter-bar { margin-bottom: 16px; }
 .table-toolbar {
   display:flex; justify-content:space-between; align-items:center;
-  span { font-size:14px; color:#666; }
+  span { font-size:14px; color:var(--el-text-color-regular); }
 }
 .toolbar-actions { display:flex; gap:8px; }
 .alert-item { display:flex; flex-direction:column; gap:2px; }
 .alert-title-row { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
-.rule-name { font-weight:700; font-size:13px; color:#303133; }
-.alert-title-text { font-weight:600; font-size:13px; color:#409EFF; }
-.alert-content-text { font-size:12px; color:#666; line-height:1.5; word-break:break-all; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:520px; }
-.ip-text { font-family:'Courier New',monospace; color:#409EFF; }
-.suggestion-text { font-size:12px; color:#666; }
-.empty-text { color:#bbb; }
+.rule-name { font-weight:700; font-size:13px; color:var(--el-text-color-primary); }
+.alert-title-text { font-weight:600; font-size:13px; color:var(--el-color-primary); }
+.alert-content-text { font-size:12px; color:var(--el-text-color-regular); line-height:1.5; word-break:break-all; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:520px; }
+.ip-text { font-family:'Courier New',monospace; color:var(--el-color-primary); }
+.suggestion-text { font-size:12px; color:var(--el-text-color-regular); }
+.empty-text { color:var(--el-text-color-placeholder); }
 .raw-log {
-  background:#f5f5f5; padding:10px; border-radius:6px;
+  background:var(--el-fill-color-light); padding:10px; border-radius:6px;
   font-size:12px; max-height:200px; overflow:auto;
   white-space:pre-wrap; word-break:break-all; margin:0;
   max-width:100%; box-sizing:border-box;
   overflow-x:auto; display:block; width:100%;
 }
 .raw-logs-container { max-height:400px; overflow:auto; }
-.raw-log-entry { padding:8px; margin-bottom:6px; background:#f8f9fa; border-radius:4px; border-left:3px solid #409EFF; }
+.raw-log-entry { padding:8px; margin-bottom:6px; background:var(--el-fill-color-light); border-radius:4px; border-left:3px solid var(--el-color-primary); }
 .raw-log-header { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
-.raw-log-time { font-size:11px; color:#909399; font-family:monospace; }
-.raw-log-ip { font-size:12px; color:#409EFF; font-family:monospace; }
-.raw-log-detail { font-size:12px; color:#606266; display:flex; gap:12px; flex-wrap:wrap; overflow:hidden; max-width:100%; }
-.raw-log-domain { color:#E6A23C; }
-.raw-log-bytes { color:#67C23A; }
+.raw-log-time { font-size:11px; color:var(--el-text-color-secondary); font-family:monospace; }
+.raw-log-ip { font-size:12px; color:var(--el-color-primary); font-family:monospace; }
+.raw-log-detail { font-size:12px; color:var(--el-text-color-regular); display:flex; gap:12px; flex-wrap:wrap; overflow:hidden; max-width:100%; }
+.raw-log-domain { color:var(--el-color-warning); }
+.raw-log-bytes { color:var(--el-color-success); }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; }
 
 </style>

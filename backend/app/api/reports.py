@@ -22,9 +22,14 @@ from app.models.script import Script
 from app.models.inspection_report import InspectionReport
 from app.models.ingest_endpoint import IngestEndpoint
 from app.models.ingest_log import IngestLog
+from app.models.ingest_sender import IngestSender
 from app.models.config import SystemConfig
-from app.api.security import get_current_user
-from app.api.inspect import _compute_server_metrics, _run_script
+from app.api.security import get_current_admin_user, get_current_user
+from app.api.inspect import (
+    _compute_server_metrics,
+    _require_script_execution_enabled,
+    _run_script,
+)
 from app.utils.timezone import format_dt, now_cst
 from app.schemas.common import Response
 
@@ -47,9 +52,14 @@ def inspection_report(
     include_addresses: bool = Query(default=True, description="是否包含当日攻击地址"),
     include_monitoring: bool = Query(default=True, description="是否包含服务器监控"),
     summary_text: str = Query(default="", description="今日速览总结文本（手动填写）"),
+    section_order: str = Query(default="", description="章节顺序快照（逗号分隔 key），导出时按此还原"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # 会执行管理员录入的脚本 —— 与 /api/inspect/execute 同一道闸。
+    # 早先这里是 get_current_user，等于给了任意登录用户一条绕过
+    # get_current_admin_user 和 ENABLE_SCRIPT_EXECUTION 的执行通道。
+    current_user: User = Depends(get_current_admin_user)
 ):
+    _require_script_execution_enabled()
     now = now_cst()
     if date:
         try:
@@ -131,7 +141,9 @@ def inspection_report(
                     "stderr": "执行异常: %s" % str(e),
                 })
 
-    # Part 4: 接收端口（仅整合每个接口最近一条）
+    # Part 4: 接收端口（勾选的每个接口取最近一条）
+    # 勾了就要 —— 不看 token，也不看绑定状态。绑定只用来认人/起名字，
+    # 不是进日报的闸门；日报的闸门就是这个勾选。
     ingested = []
     if endpoint_ids:
         try:
@@ -142,9 +154,22 @@ def inspection_report(
             ep = db.query(IngestEndpoint).filter(IngestEndpoint.id == eid).first()
             if not ep:
                 continue
-            log = db.query(IngestLog).filter(IngestLog.endpoint_id == eid).order_by(IngestLog.id.desc()).first()
+            # 「最新一条」按源端发送时间排序，没有就退回接收顺序。
+            # 早先固定 order_by(id.desc()) —— 重试送达的旧批次会顶掉新数据。
+            log = (
+                db.query(IngestLog)
+                .filter(IngestLog.endpoint_id == eid)
+                .order_by(IngestLog.sent_at.desc(), IngestLog.id.desc())
+                .first()
+            )
+            sender_name = ""
+            if log and log.sender_id:
+                s = db.query(IngestSender).filter(IngestSender.id == log.sender_id).first()
+                if s:
+                    sender_name = s.display_name or s.src_ip or ""
             ingested.append({
                 "endpoint_name": ep.name,
+                "sender_name": sender_name,
                 "received_at": log.received_at.strftime("%Y-%m-%d %H:%M:%S") if (log and log.received_at) else "",
                 "payload": log.payload if log else "",
             })
@@ -152,15 +177,34 @@ def inspection_report(
     generated_at_str = format_dt(now)
     report_date_str = day_start.strftime("%Y-%m-%d")
 
+    # 只存聚合值，不存 Prometheus 全量时序（每台约 864 点 × 3 条曲线）。
+    # 预览只用 avg/peak，却把整段序列塞进 MEDIUMTEXT，报告一多就撑爆。
+    servers_for_store = None
+    if servers:
+        servers_for_store = []
+        for s in servers:
+            slim = {k: v for k, v in s.items() if not k.endswith("_series")}
+            if isinstance(slim.get("disks"), list):
+                slim["disks"] = [
+                    {k: v for k, v in d.items() if not k.endswith("_series")}
+                    for d in slim["disks"]
+                ]
+            servers_for_store.append(slim)
+
+    order_keys = [k.strip() for k in section_order.split(",") if k.strip()] or None
+
     # 组装 content（不含 stdout 详情，仅摘要）
     content = {
         "monitoring_window": "24 小时",
         "monitoring_connected": err is None,
         "monitoring_error": err,
         "addresses": addresses,
-        "servers": servers,
+        "servers": servers_for_store,
         "ingested": ingested,
         "summary_text": summary_text,
+        # 章节顺序随报告快照。导出必须读这里，不能读导出当下的 UI 状态，
+        # 否则上周生成的报告会按今天点的顺序导出。
+        "section_order": order_keys,
         # scripts 预览仅含基本信息，不含 stdout
         "scripts_preview": [
             {
@@ -177,17 +221,23 @@ def inspection_report(
     # 完整 scripts（含 stdout）存 scripts_json
     scripts_json_str = json.dumps(scripts_out, ensure_ascii=False)
 
-    # 写入 DB
-    rec = InspectionReport(
-        report_date=report_date_str,
-        generated_at=generated_at_str,
-        address_count=len(addresses) if addresses else 0,
-        script_count=len(scripts_out),
-        content=json.dumps(content, ensure_ascii=False),
-        scripts_json=scripts_json_str,
-        created_by=current_user.username,
+    # 同一天同一个人重复点「生成」是覆盖而不是插第二行 —— 双击不该出两份报告
+    rec = (
+        db.query(InspectionReport)
+        .filter(
+            InspectionReport.report_date == report_date_str,
+            InspectionReport.created_by == current_user.username,
+        )
+        .first()
     )
-    db.add(rec)
+    if rec is None:
+        rec = InspectionReport(report_date=report_date_str, created_by=current_user.username)
+        db.add(rec)
+    rec.generated_at = generated_at_str
+    rec.address_count = len(addresses) if addresses else 0
+    rec.script_count = len(scripts_out)
+    rec.content = json.dumps(content, ensure_ascii=False)
+    rec.scripts_json = scripts_json_str
     db.commit()
     db.refresh(rec)
 
@@ -205,6 +255,7 @@ def inspection_report(
             "scripts": scripts_out,
             "ingested": ingested,
             "summary_text": summary_text,
+            "section_order": order_keys,
         }
     )
 
@@ -272,7 +323,8 @@ def get_summary_template(
 def save_summary_template(
     body: dict = Body(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # 全局模板影响所有人生成的报告，收 admin
+    current_user: User = Depends(get_current_admin_user)
 ):
     """保存报告默认模板。兼容两种入参：
     1. {template: "..."} — 仅保存今日速览文本（向后兼容）
@@ -328,6 +380,7 @@ def get_report(
             "scripts": scripts,
             "ingested": content.get("ingested", []),
             "summary_text": content.get("summary_text", ""),
+            "section_order": content.get("section_order"),
         }
     )
 
@@ -337,7 +390,8 @@ def get_report(
 def delete_report(
     report_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # 报告是审计产物，不能让任意登录用户销毁
+    current_user: User = Depends(get_current_admin_user)
 ):
     r = db.query(InspectionReport).filter(InspectionReport.id == report_id).first()
     if not r:

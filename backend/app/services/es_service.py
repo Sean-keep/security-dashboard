@@ -236,11 +236,9 @@ class ESService:
             must_clauses.extend(self._build_time_filter(time_window))
 
         # Add other filters
-        if filters:
-            for f in filters:
-                clause = self._build_filter_clause(f)
-                if clause:
-                    must_clauses.append(clause)
+        filters_clause = self._build_filters_clause(filters)
+        if filters_clause:
+            must_clauses.append(filters_clause)
 
         body = {
             "size": limit,
@@ -290,11 +288,9 @@ class ESService:
         must_clauses = []
         if time_window:
             must_clauses.extend(self._build_time_filter(time_window))
-        if filters:
-            for f in filters:
-                clause = self._build_filter_clause(f)
-                if clause:
-                    must_clauses.append(clause)
+        filters_clause = self._build_filters_clause(filters)
+        if filters_clause:
+            must_clauses.append(filters_clause)
 
         # Get field types to handle text fields
         field_types = self.get_index_fields(index)
@@ -395,11 +391,9 @@ class ESService:
             must_clauses = []
             if time_window:
                 must_clauses.extend(self._build_time_filter(time_window))
-            if filters:
-                for f in filters:
-                    clause = self._build_filter_clause(f)
-                    if clause:
-                        must_clauses.append(clause)
+            filters_clause = self._build_filters_clause(filters)
+            if filters_clause:
+                must_clauses.append(filters_clause)
             if join_values and join.get("local_field"):
                 # Use .keyword suffix for text fields in terms query
                 join_field = join["local_field"]
@@ -508,6 +502,71 @@ class ESService:
 
         return [{"range": {"@timestamp": {"gte": gte_time}}}]
 
+    def _build_filters_clause(self, filters: Any) -> Optional[Dict]:
+        """Compile a stage's ``filters`` payload into a single ES clause.
+
+        ``filters`` comes in two shapes and both must keep working:
+
+        * legacy ``List[FilterNode]`` — a flat list of ``{field, operator, value}``
+        * FilterTree — ``{logic: "and|or|not", filters: [...]}`` where children may
+          themselves be FilterTree nodes. This is what ``useRules.js``
+          ``buildStageParams`` / ``cleanFilterTree`` emit.
+
+        The old code did ``for f in filters`` and handed each item to
+        ``_build_filter_clause``. On a FilterTree that iterates the **dict keys**,
+        so ``f`` is the string ``"logic"`` and the query blew up with
+        ``AttributeError: 'str' object has no attribute 'get'`` — every rule that
+        used a logic group failed on every run.
+        """
+        if not filters:
+            return None
+        # New format: the payload is one FilterTree node.
+        if isinstance(filters, dict):
+            return self._build_filter_node(filters)
+        # Legacy format: a list of nodes (each a leaf or a nested FilterTree).
+        clauses = []
+        for f in filters:
+            clause = self._build_filter_node(f)
+            if clause:
+                clauses.append(clause)
+        return self._combine_must(clauses)
+
+    def _build_filter_node(self, node: Any) -> Optional[Dict]:
+        """Dispatch one entry: a FilterTree group or a flat leaf condition."""
+        if not isinstance(node, dict):
+            return None
+        if "logic" in node and "filters" in node:
+            return self._build_filter_tree(node)
+        return self._build_filter_clause(node)
+
+    def _build_filter_tree(self, tree: Dict) -> Optional[Dict]:
+        """Compile an AND/OR/NOT group. Children may be leaves or nested groups."""
+        logic = str(tree.get("logic") or "and").lower()
+        clauses = []
+        for child in tree.get("filters") or []:
+            clause = self._build_filter_node(child)
+            if clause:
+                clauses.append(clause)
+        if not clauses:
+            return None
+        if logic == "not":
+            # Negate the conjunction of the children. A leaf that already carries
+            # its own must_not (not_equals / not_contains) is fine here — one
+            # must_not wrapper is not a double negation, it is exactly NOT(x).
+            inner = self._combine_must(clauses)
+            return {"bool": {"must_not": [inner]}}
+        if logic == "or":
+            return {"bool": {"should": clauses, "minimum_should_match": 1}}
+        return self._combine_must(clauses)
+
+    @staticmethod
+    def _combine_must(clauses: List[Dict]) -> Optional[Dict]:
+        if not clauses:
+            return None
+        if len(clauses) == 1:
+            return clauses[0]
+        return {"bool": {"must": clauses}}
+
     def _build_filter_clause(self, f: Dict) -> Optional[Dict]:
         """Build a single filter clause"""
         field = f.get("field", "")
@@ -530,13 +589,13 @@ class ESService:
         elif operator == "not_equals":
             return {"bool": {"must_not": [{"term": {safe_field_keyword: value}}]}}
         elif operator == "contains":
-            return {"wildcard": {safe_field: f"*{value}*"}}
+            return {"wildcard": {safe_field: f"*{self._escape_wildcard(value)}*"}}
         elif operator == "not_contains":
-            return {"bool": {"must_not": [{"wildcard": {safe_field: f"*{value}*"}}]}}
+            return {"bool": {"must_not": [{"wildcard": {safe_field: f"*{self._escape_wildcard(value)}*"}}]}}
         elif operator == "starts_with":
             return {"prefix": {safe_field: value}}
         elif operator == "ends_with":
-            return {"wildcard": {safe_field: f"*{value}"}}
+            return {"wildcard": {safe_field: f"*{self._escape_wildcard(value)}"}}
         elif operator in ("gt", "gte", "lt", "lte"):
             try:
                 num_val = float(value)
@@ -565,17 +624,42 @@ class ESService:
         else:
             return {"term": {safe_field: value}}
 
+    @staticmethod
+    def _escape_wildcard(value: Any) -> str:
+        """转义用户输入里的 ``*`` / ``?`` / ``\\``。
+
+        contains / ends_with 拼的是 ES ``wildcard`` 查询，用户输入里的 ``*``
+        会变成「匹配一切」——一条 `contains: "*"` 就能把整库捞回来。
+        """
+        text = "" if value is None else str(value)
+        out = []
+        for ch in text:
+            if ch in ("*", "?", "\\"):
+                out.append("\\" + ch)
+            else:
+                out.append(ch)
+        return "".join(out)
+
+    # field -> is_text?  一次规则里几十个 term 都要问一次，每次都打 ES 拿 mapping
+    # 会把规则执行拖死。进程内缓存，索引 mapping 变了重启即失效。
+    _text_field_cache: Dict[str, bool] = {}
+
     def _is_text_field(self, field_name: str) -> bool:
         """Check if a field is 'text' type (needs .keyword for term queries)"""
         if not field_name:
             return False
+        cached = self._text_field_cache.get(field_name)
+        if cached is not None:
+            return cached
+        result = False
         try:
             fields = self.get_index_fields(self.config.default_index)
             if fields.get(field_name) == "text" and fields.get(f"{field_name}.keyword"):
-                return True
+                result = True
         except Exception:
             pass
-        return False
+        self._text_field_cache[field_name] = result
+        return result
 
     def _build_nested_aggregation(
         self,

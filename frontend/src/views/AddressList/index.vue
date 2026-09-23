@@ -11,6 +11,21 @@
         <el-form-item label="关键词">
           <el-input v-model="filterForm.keyword" placeholder="IP/域名" clearable style="width:180px" @change="filterChange" />
         </el-form-item>
+        <el-form-item label="威胁等级">
+          <el-select v-model="filterForm.severity" placeholder="全部" clearable style="width:120px" @change="filterChange">
+            <el-option label="严重" value="critical" />
+            <el-option label="高危" value="high" />
+            <el-option label="中危" value="medium" />
+            <el-option label="低危" value="low" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filterForm.status" placeholder="全部" clearable style="width:120px" @change="filterChange">
+            <el-option label="活跃" value="active" />
+            <el-option label="已封禁" value="blocked" />
+            <el-option label="白名单" value="whitelist" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="时间范围">
           <el-select v-model="timePreset" size="default" style="width:145px" @change="onTimePresetChange">
             <el-option label="最近 1 小时" value="1h" />
@@ -23,9 +38,20 @@
         <el-form-item>
           <el-button type="primary" @click="filterChange">筛选</el-button>
           <el-button @click="resetFilter">重置</el-button>
+          <el-button @click="autoFillCountries">批量归属</el-button>
         </el-form-item>
       </el-form>
     </el-card>
+
+    <el-alert
+      v-if="error"
+      type="error"
+      :title="error"
+      :closable="true"
+      show-icon
+      style="margin-bottom: 12px"
+      @close="error = null"
+    />
 
     <!-- 表格 -->
     <AddressTable
@@ -34,6 +60,7 @@
       :pagination="pagination"
       :multiple-selection="multipleSelection"
       :country-loading-map="countryLoadingMap"
+      :loading="loading"
       @selection-change="onSelectionChange"
       @sort-change="onSortChange"
       @block-one="blockOne"
@@ -60,6 +87,7 @@
 
 <script setup>
 import { onMounted } from 'vue'
+import { Plus } from '@element-plus/icons-vue'
 import { useAddresses } from './composables/useAddresses'
 import AddressTable from './components/AddressTable.vue'
 import AddressFormDialog from './components/AddressFormDialog.vue'
@@ -74,6 +102,8 @@ const {
   countryLoadingMap,
   filterForm,
   timePreset,
+  loading,
+  error,
   filterChange,
   onTimePresetChange,
   resetFilter,
@@ -88,6 +118,7 @@ const {
   batchDelete,
   exportCsv,
   openBlockConfig,
+  autoFillCountries,
   loadData
 } = useAddresses()
 

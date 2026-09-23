@@ -83,6 +83,24 @@ def operator_user(db_session):
 
 
 @pytest.fixture()
+def viewer_user(db_session):
+    from app.api.security import get_password_hash
+    from app.models.user import User
+
+    user = User(
+        username="viewer",
+        password_hash=get_password_hash("ViewPass1"),
+        nickname="View",
+        role="viewer",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture()
 def client(engine, admin_user):
     from app.main import app
 

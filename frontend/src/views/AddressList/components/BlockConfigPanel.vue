@@ -31,5 +31,5 @@ const {
 </script>
 
 <style lang="scss" scoped>
-.block-tip { font-size: 12px; color: #909399; padding: 0 0 8px 90px; line-height: 1.6; }
+.block-tip { font-size: 12px; color: var(--el-text-color-secondary); padding: 0 0 8px 90px; line-height: 1.6; }
 </style>

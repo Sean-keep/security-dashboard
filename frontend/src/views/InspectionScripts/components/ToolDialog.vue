@@ -167,7 +167,7 @@ defineExpose({ openToolDialog })
 .tool-tabs :deep(.el-tabs__header) {
   margin: 0;
   padding: 0 20px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
 }
 
 .tool-tabs :deep(.el-tabs__nav-wrap::after) {
@@ -195,7 +195,7 @@ defineExpose({ openToolDialog })
 }
 
 .adhoc-output {
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -205,14 +205,14 @@ defineExpose({ openToolDialog })
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   font-weight: 600;
 }
 
 /* 代码编辑器 */
 .code-editor-wrapper {
   width: 100%;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -226,19 +226,19 @@ defineExpose({ openToolDialog })
   justify-content: space-between;
   align-items: center;
   padding: 8px 16px;
-  background: #f5f7fa;
-  border-bottom: 1px solid #e4e7ed;
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .code-lang {
   font-size: 13px;
   font-weight: 600;
-  color: #409eff;
+  color: var(--el-color-primary);
 }
 
 .code-hint {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .code-textarea :deep(.el-textarea__inner) {
@@ -259,8 +259,8 @@ defineExpose({ openToolDialog })
 .code-block {
   margin: 0;
   padding: 16px;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--code-bg);
+  color: var(--code-fg);
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
   line-height: 1.6;

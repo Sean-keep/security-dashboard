@@ -2,8 +2,59 @@
   <div class="remote-container">
     <div class="page-header">
       <h2>远程接收接口</h2>
-      <span class="tip">定义多个接收接口（各带名称），源端往对应接口 POST 数据并携带请求头 <code>X-Ingest-Token: &lt;token&gt;</code> 即自动存储</span>
+      <span class="tip">源端 POST 即存，无需 token · 发送方按特征归类，可绑定起名 · 日报勾选接口取最近一条</span>
     </div>
+
+    <!-- 发送方：接收端认人。特征是提示不是凭证，绑定只是起名字 -->
+    <el-card class="section" shadow="never">
+      <div class="section-header">
+        <span class="section-title">发送方</span>
+        <span class="tip">共 {{ senders.length }} 个 · 待绑定 {{ pendingCount }} 个</span>
+        <el-button size="small" style="margin-left:auto" @click="loadSenders">刷新</el-button>
+      </div>
+      <el-table :data="senders" border stripe size="small" v-loading="sendersLoading" class="nowrap-table">
+        <el-table-column prop="status" label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'bound'" type="success" size="small">已绑定</el-tag>
+            <el-tag v-else-if="row.status === 'rejected'" type="danger" size="small">已拒收</el-tag>
+            <el-tag v-else type="warning" size="small">待绑定</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="display_name" label="名称" min-width="110" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.display_name">{{ row.display_name }}</span>
+            <span v-else class="muted">未命名</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="endpoint_name" label="接口" width="110" show-overflow-tooltip>
+          <template #default="{ row }"><code class="name">{{ row.endpoint_name }}</code></template>
+        </el-table-column>
+        <el-table-column prop="src_ip" label="源 IP" width="130" show-overflow-tooltip />
+        <el-table-column prop="user_agent" label="User-Agent" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="payload_shape" label="载荷形状" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="send_count" label="次数" width="70" sortable />
+        <el-table-column prop="last_seen_at" label="最近接收" width="160" />
+        <el-table-column label="操作" width="170" fixed="right">
+          <template #default="{ row }">
+            <div class="ops">
+              <el-button v-if="row.status !== 'bound'" size="small" type="text" style="color:var(--el-color-success)" @click.stop="bindSender(row)">绑定</el-button>
+              <el-button v-if="row.status !== 'rejected'" size="small" type="text" style="color:var(--el-color-danger)" @click.stop="rejectSender(row)">拒收</el-button>
+              <el-dropdown trigger="click" @command="(c) => onSenderOp(c, row)">
+                <el-button size="small" type="text" @click.stop>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-if="row.status === 'bound'" command="unbind">解绑</el-dropdown-item>
+                    <el-dropdown-item command="sample">样例载荷</el-dropdown-item>
+                    <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!sendersLoading && senders.length === 0" description="暂无发送方，源端推一次数据后会出现在这里" />
+    </el-card>
 
     <el-card class="section" shadow="never">
       <div class="section-header">
@@ -16,6 +67,7 @@
         stripe
         size="small"
         v-loading="loading"
+        class="nowrap-table"
         :row-class-name="rowClass"
         @row-click="onRowClick"
         @expand-change="onExpandChange"
@@ -47,7 +99,10 @@
                     <div class="log-head">
                       <span>#{{ idx + 1 }}</span>
                       <span>{{ item.received_at }}</span>
-                      <el-button size="small" type="text" style="color:#f56c6c;margin-left:auto" @click="deleteLog(item, row)">
+                      <el-tag v-if="item.sender_name" size="small" :type="item.sender_status === 'bound' ? 'success' : (item.sender_status === 'rejected' ? 'danger' : 'warning')">
+                        {{ item.sender_name }}
+                      </el-tag>
+                      <el-button size="small" type="text" style="color:var(--el-color-danger);margin-left:auto" @click="deleteLog(item, row)">
                         删除
                       </el-button>
                     </div>
@@ -77,31 +132,35 @@
           </template>
         </el-table-column>
         <el-table-column type="index" label="序号" width="60" />
-        <el-table-column prop="name" label="接口名称" min-width="160">
+        <el-table-column prop="name" label="接口名称" min-width="130" show-overflow-tooltip>
           <template #default="{ row }">
             <code class="name">{{ row.name }}</code>
           </template>
         </el-table-column>
-        <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="count" label="接收数" width="90" sortable />
-        <el-table-column prop="created_at" label="创建时间" width="170" />
-        <el-table-column label="Token" width="90" align="center">
+        <el-table-column prop="description" label="说明" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="count" label="接收数" width="80" sortable />
+        <el-table-column prop="created_at" label="创建时间" width="160" />
+        <el-table-column label="Token" width="80" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.has_token" type="success" size="small">已设置</el-tag>
-            <el-tag v-else type="info" size="small">未设置</el-tag>
+            <el-tag v-else type="info" size="small">无</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="接收地址" min-width="280">
+        <el-table-column label="接收地址" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
-            <code class="url">{{ baseUrl }}/api/remote/ingest/{{ row.name }}</code>
-            <el-button size="small" type="text" @click.stop="copy(baseUrl + '/api/remote/ingest/' + row.name)">复制</el-button>
+            <div class="ops">
+              <code class="url">{{ baseUrl }}/api/remote/ingest/{{ row.name }}</code>
+              <el-button size="small" type="text" @click.stop="copy(baseUrl + '/api/remote/ingest/' + row.name)">复制</el-button>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="text" @click.stop="openEdit(row)">编辑</el-button>
-            <el-button size="small" type="text" @click.stop="rotateToken(row)">重置Token</el-button>
-            <el-button size="small" type="text" style="color:#f56c6c" @click.stop="removeEndpoint(row)">删除</el-button>
+            <div class="ops">
+              <el-button size="small" type="text" @click.stop="openEdit(row)">编辑</el-button>
+              <el-button size="small" type="text" @click.stop="rotateToken(row)">Token</el-button>
+              <el-button size="small" type="text" style="color:var(--el-color-danger)" @click.stop="removeEndpoint(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -154,11 +213,19 @@
         <el-button type="primary" @click="saveEdit">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 发送方样例载荷 -->
+    <el-dialog v-model="showSample" :title="'样例载荷 — ' + (sampleSender?.display_name || sampleSender?.src_ip || '')" width="640px">
+      <pre class="log-payload">{{ pretty(samplePayload) }}</pre>
+      <template #footer>
+        <el-button type="primary" @click="showSample = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { remoteApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight } from '@element-plus/icons-vue'
@@ -167,6 +234,14 @@ const endpoints = ref([])
 const loading = ref(false)
 const baseUrl = window.location.origin
 const tableRef = ref(null)
+
+// 发送方（接收端认人）
+const senders = ref([])
+const sendersLoading = ref(false)
+const pendingCount = computed(() => senders.value.filter(s => s.status === 'pending').length)
+const showSample = ref(false)
+const samplePayload = ref('')
+const sampleSender = ref(null)
 
 const showCreate = ref(false)
 const form = reactive({ name: '', description: '' })
@@ -353,40 +428,140 @@ function copy(text) {
   navigator.clipboard?.writeText(text).then(() => ElMessage.success('已复制'))
 }
 
+async function loadSenders() {
+  sendersLoading.value = true
+  try {
+    const res = await remoteApi.listSenders()
+    senders.value = res.data?.items || []
+  } finally {
+    sendersLoading.value = false
+  }
+}
+
+async function bindSender(row) {
+  let name = row.display_name || row.src_ip || ''
+  try {
+    const r = await ElMessageBox.prompt(
+      '起个名字，方便日报里认人（留空则用源 IP）。',
+      '绑定发送方',
+      { inputValue: name, confirmButtonText: '绑定', cancelButtonText: '取消' }
+    )
+    name = (r.value || '').trim()
+  } catch {
+    return
+  }
+  await remoteApi.bindSender(row.id, name)
+  ElMessage.success('已绑定')
+  loadSenders()
+}
+
+async function unbindSender(row) {
+  await ElMessageBox.confirm(
+    `确定解绑「${row.display_name || row.src_ip}」？名字会清掉，数据照旧。`,
+    '确认解绑',
+    { type: 'warning', confirmButtonText: '解绑', cancelButtonText: '取消' }
+  )
+  await remoteApi.unbindSender(row.id)
+  ElMessage.success('已退回待绑定')
+  loadSenders()
+}
+
+async function rejectSender(row) {
+  await ElMessageBox.confirm(
+    `确定拒收「${row.display_name || row.src_ip}」？只是标记，数据照收照进日报。`,
+    '确认拒收',
+    { type: 'warning', confirmButtonText: '拒收', cancelButtonText: '取消' }
+  )
+  await remoteApi.rejectSender(row.id)
+  ElMessage.success('已拒收')
+  loadSenders()
+}
+
+async function deleteSender(row) {
+  await ElMessageBox.confirm(
+    `确定删除发送方「${row.display_name || row.src_ip}」的识别记录？它推过的数据会保留。`,
+    '确认删除',
+    { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+  )
+  await remoteApi.deleteSender(row.id)
+  ElMessage.success('已删除')
+  loadSenders()
+}
+
+function openSample(row) {
+  sampleSender.value = row
+  samplePayload.value = row.sample_payload || ''
+  showSample.value = true
+}
+
+function onSenderOp(cmd, row) {
+  if (cmd === 'unbind') return unbindSender(row)
+  if (cmd === 'sample') return openSample(row)
+  if (cmd === 'delete') return deleteSender(row)
+}
+
 onMounted(() => {
   loadEndpoints()
+  loadSenders()
 })
 </script>
 
 <style scoped>
 .remote-container { padding: 20px; }
-.page-header { margin-bottom: 16px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.page-header h2 { margin: 0; font-size: 18px; font-weight: 600; }
-.tip { font-size: 12px; color: #909399; }
+/* 头部一行放得下就一行，放不下省略号 —— 不换行 */
+.page-header { margin-bottom: 16px; display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.page-header h2 { margin: 0; font-size: 18px; font-weight: 600; flex: none; }
+.page-header .tip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); }
 .section { margin-bottom: 16px; }
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.section-title { font-weight: 600; font-size: 14px; color: #303133; }
-.name { font-family: monospace; font-size: 13px; color: #409EFF; }
-.url { font-family: monospace; font-size: 12px; word-break: break-all; color: #606266; }
+.section-title { font-weight: 600; font-size: 14px; color: var(--el-text-color-primary); flex: none; }
+.name { font-family: monospace; font-size: 13px; color: var(--el-color-primary); }
+.muted { color: var(--el-text-color-secondary); }
+.url { font-family: monospace; font-size: 12px; color: var(--el-text-color-regular); }
 
-:deep(.el-table .expanded-row td) { background: #f5f7fa !important; }
+/* 表格单元格一律不换行，长内容省略号 + tooltip */
+.nowrap-table :deep(.el-table__cell .cell) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nowrap-table :deep(.el-table__cell .el-tooltip) { max-width: 100%; }
+
+/* 操作列一行放齐，靠 dropdown 收下不常用的 */
+.ops {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.ops :deep(.el-button) { padding: 0 4px; }
+.ops :deep(.el-button + .el-button) { margin-left: 0; }
+.ops .url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+:deep(.el-table .expanded-row td) { background: var(--el-fill-color-light) !important; }
 :deep(.el-table td.el-table__cell) { cursor: pointer; }
 
 .expand-icon {
   display: flex;
   align-items: center;
   transition: transform 0.2s;
-  color: #c0c4cc;
+  color: var(--el-text-color-placeholder);
   cursor: pointer;
 }
-.expand-icon.expanded { transform: rotate(90deg); color: #409EFF; }
+.expand-icon.expanded { transform: rotate(90deg); color: var(--el-color-primary); }
 
 /* 隐藏原生展开箭头（用自定义箭头代替） */
 :deep(.el-table__expand-icon) { display: none; }
 
 .expand-panel {
   padding: 12px 16px;
-  background: #fafafa;
+  background: var(--el-fill-color-light);
 }
 
 .expand-toolbar {
@@ -395,29 +570,29 @@ onMounted(() => {
   gap: 12px;
   margin-bottom: 10px;
 }
-.expand-title { font-size: 13px; color: #606266; font-weight: 500; }
+.expand-title { font-size: 13px; color: var(--el-text-color-regular); font-weight: 500; }
 
-.expand-empty { color: #909399; font-size: 13px; padding: 8px 0; text-align: center; }
+.expand-empty { color: var(--el-text-color-secondary); font-size: 13px; padding: 8px 0; text-align: center; }
 
 .log-list { display: flex; flex-direction: column; gap: 8px; }
-.log-item { border: 1px solid #e4e7ed; border-radius: 4px; overflow: hidden; }
+.log-item { border: 1px solid var(--el-border-color-light); border-radius: 4px; overflow: hidden; }
 .log-head {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   padding: 5px 12px;
   display: flex;
   gap: 16px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   align-items: center;
 }
 .log-payload {
   margin: 0;
   padding: 10px 12px;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--code-bg);
+  color: var(--code-fg);
   font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
+  /* 不换行：长行横向滚动，保住 JSON 的缩进结构 */
+  white-space: pre;
   max-height: 280px;
   overflow: auto;
 }
@@ -430,12 +605,14 @@ onMounted(() => {
 }
 .token-value {
   flex: 1;
+  min-width: 0;
   font-family: monospace;
   font-size: 13px;
-  word-break: break-all;
-  background: #f5f7fa;
+  white-space: nowrap;
+  overflow-x: auto;
+  background: var(--el-fill-color-light);
   padding: 8px 12px;
   border-radius: 4px;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 </style>

@@ -19,17 +19,23 @@ def test_create_requires_auth(client):
     assert resp.status_code == 401
 
 
-def test_ingest_requires_token(client):
+def test_ingest_token_is_optional(client):
+    """token 从「必须」降成「可选额外锁」—— 远程端脚本写死了不能改。
+
+    不带 token 就收（身份靠接收端认人 + 手动绑定）；带了就必须对 ——
+    用上了就不能默默放行错误密钥。
+    """
     from tests.conftest import login_headers
 
     headers = login_headers(client)
     ep = _create_endpoint(client, headers)
 
     client.cookies.clear()
-    # No token at all.
+    # No token at all — 收。
     r1 = client.post(f"/api/remote/ingest/{ep['name']}", content=b"{}")
-    assert r1.status_code == 401
-    # Wrong token.
+    assert r1.status_code == 200
+    assert r1.json()["data"]["sender_status"] == "pending"
+    # Wrong token — 拒。
     r2 = client.post(
         f"/api/remote/ingest/{ep['name']}",
         content=b"{}",
@@ -147,3 +153,86 @@ def test_endpoint_name_validated(client):
     )
     # Pydantic rejects the name pattern -> FastAPI returns 422.
     assert resp.status_code == 422
+
+
+# ── 幂等与源端时序 ────────────────────────────────────────────
+
+def test_message_id_is_idempotent(client):
+    """推送端遇到 429/5xx 必然重投 —— 同一个 X-Message-Id 不能变成两行。"""
+    from tests.conftest import login_headers
+
+    headers = login_headers(client)
+    ep = _create_endpoint(client, headers, name="src6")
+    client.cookies.clear()
+    hdr = {"X-Ingest-Token": ep["token"], "X-Message-Id": "evt-1"}
+
+    first = client.post(f"/api/remote/ingest/{ep['name']}", content=b'{"n":1}', headers=hdr)
+    assert first.status_code == 200
+    assert first.json()["data"]["duplicate"] is False
+    fid = first.json()["data"]["id"]
+
+    second = client.post(f"/api/remote/ingest/{ep['name']}", content=b'{"n":1}', headers=hdr)
+    assert second.status_code == 200
+    assert second.json()["data"]["duplicate"] is True
+    assert second.json()["data"]["id"] == fid
+
+    listed = client.get(f"/api/remote/endpoints/{ep['id']}/logs", headers=login_headers(client))
+    assert listed.json()["data"]["total"] == 1
+
+
+def test_sent_at_is_stored_and_orders_listing(client):
+    """重试送达的旧批次不能顶掉新数据 —— 列表必须按源端发送时间排。"""
+    from tests.conftest import login_headers
+
+    headers = login_headers(client)
+    ep = _create_endpoint(client, headers, name="src7")
+    client.cookies.clear()
+    tok = {"X-Ingest-Token": ep["token"]}
+
+    # 先投「新」的，再投一条迟到的「旧」的
+    client.post(f"/api/remote/ingest/{ep['name']}", content=b'{"new":1}',
+                headers={**tok, "X-Message-Id": "b", "X-Sent-At": "2026-09-23T12:00:00"})
+    client.post(f"/api/remote/ingest/{ep['name']}", content=b'{"old":1}',
+                headers={**tok, "X-Message-Id": "a", "X-Sent-At": "2026-09-23T09:00:00"})
+
+    listed = client.get(f"/api/remote/endpoints/{ep['id']}/logs", headers=login_headers(client))
+    items = listed.json()["data"]["items"]
+    assert items[0]["message_id"] == "b", items
+    assert items[0]["sent_at"] == "2026-09-23 12:00:00"
+
+
+def test_last_received_at_is_stamped(client):
+    """存活信号：没有它分不清「agent 挂了」和「本来就没数据」。"""
+    from tests.conftest import login_headers
+
+    headers = login_headers(client)
+    ep = _create_endpoint(client, headers, name="src8")
+
+    before = client.get("/api/remote/endpoints", headers=headers).json()["data"]
+    assert all(i["seconds_since_last"] is None for i in before if i["name"] == "src8")
+
+    client.cookies.clear()
+    client.post(f"/api/remote/ingest/{ep['name']}", content=b'{}',
+                headers={"X-Ingest-Token": ep["token"]})
+
+    after = client.get("/api/remote/endpoints", headers=login_headers(client)).json()["data"]
+    row = next(i for i in after if i["name"] == "src8")
+    assert row["last_received_at"]
+    assert row["seconds_since_last"] is not None
+
+
+# ── 铸造/轮换凭据必须是 admin ────────────────────────────────
+
+def test_non_admin_cannot_mint_or_rotate_token(client, operator_user):
+    """轮换会让正当源立刻断供、创建等于开一条无鉴权写库通道 —— 不能只要登录就行。"""
+    from tests.conftest import login_headers
+
+    admin_h = login_headers(client)
+    ep = _create_endpoint(client, admin_h, name="src9")
+
+    op_h = login_headers(client, "operator", "OperPass1")
+    assert client.post("/api/remote/endpoints", json={"name": "src9b"}, headers=op_h).status_code == 403
+    assert client.post(f"/api/remote/endpoints/{ep['id']}/rotate-token", headers=op_h).status_code == 403
+    assert client.put(f"/api/remote/endpoints/{ep['id']}", json={"description": "x"}, headers=op_h).status_code == 403
+    assert client.delete(f"/api/remote/endpoints/{ep['id']}", headers=op_h).status_code == 403
+    assert client.delete(f"/api/remote/endpoints/{ep['id']}/logs", headers=op_h).status_code == 403

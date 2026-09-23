@@ -3,7 +3,7 @@ Logs API Endpoints - 日志中心（登录日志 + 操作日志）
 """
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -11,7 +11,7 @@ from app.models.base import get_db
 from app.models.operation_log import OperationLog
 from app.models.user import User
 from app.schemas.common import Response, PaginatedResponse, PaginatedData
-from app.api.security import get_current_user
+from app.api.security import get_current_user, require_roles
 
 router = APIRouter(prefix="/logs", tags=["Logs"])
 
@@ -113,16 +113,21 @@ async def list_logs(
 @router.post("", response_model=Response[OperationLogResponse])
 async def create_log(
     request: OperationLogCreate,
+    http_request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_roles("admin", "operator"))
 ):
-    """Write an operation log entry"""
+    """Write an operation log entry.
+
+    username / ip_address are taken from the authenticated connection, not the
+    body — otherwise this is a free "log whatever you like as anyone" forge.
+    """
     log = OperationLog(
         log_type=request.log_type or "operation",
-        username=request.username or current_user.username,
+        username=current_user.username,
         action=request.action,
         target=request.target,
-        ip_address=request.ip_address,
+        ip_address=(http_request.client.host if http_request.client else "") or None,
         status=request.status or "success",
         detail=request.detail
     )

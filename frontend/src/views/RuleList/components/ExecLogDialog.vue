@@ -1,7 +1,7 @@
 <template>
   <el-dialog v-model="visible" title="规则执行记录" width="900px" top="10vh">
     <div style="margin-bottom:12px">
-      <span style="font-size:14px;color:#606266">规则：<strong>{{ ruleName }}</strong></span>
+      <span style="font-size:14px;color:var(--el-text-color-regular)">规则：<strong>{{ ruleName }}</strong></span>
       <el-button size="small" style="float:right" @click="loadExecutionLogs()" :loading="execLogLoading">刷新</el-button>
     </div>
     <el-table :data="execLogList" stripe size="small" v-loading="execLogLoading">
@@ -15,7 +15,7 @@
       <el-table-column prop="detail" label="执行摘要" min-width="300" show-overflow-tooltip />
       <el-table-column prop="error_message" label="错误信息" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
-          <span v-if="row.error_message" style="color:#F56C6C">{{ row.error_message }}</span>
+          <span v-if="row.error_message" style="color:var(--el-color-danger)">{{ row.error_message }}</span>
           <span v-else>-</span>
         </template>
       </el-table-column>

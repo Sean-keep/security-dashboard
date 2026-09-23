@@ -18,6 +18,33 @@ from app.core.policy import validate_password_strength
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
+# 出站一律不回传这类 key 的明文。TG 那套（_redact_actions + 留空保持）是同项目的
+# 正确模板，这里补上 —— 早先 GET /settings/config 会把 es_password / mysql_password /
+# grafana_api_key 等原样吐给任意登录用户，而 ConnectionPanel 界面上还显示成 ********。
+_SECRET_KEY_MARKERS = ("password", "api_key", "apikey", "token", "secret")
+
+
+def _is_secret_key(key: str) -> bool:
+    k = (key or "").lower()
+    return any(m in k for m in _SECRET_KEY_MARKERS)
+
+
+def _mask_config_row(row: SystemConfig) -> dict:
+    secret = _is_secret_key(row.key)
+    return {
+        "id": row.id,
+        "key": row.key,
+        # 密钥类只回传「是否已配置」，值永远是空串
+        "value": "" if secret else row.value,
+        "secret_set": bool((row.value or "").strip()) if secret else None,
+        "label": row.label,
+        "description": row.description,
+        "group_name": row.group_name,
+    }
+
+
+VALID_ROLES = ("admin", "operator", "viewer")
+
 
 # === User Management ===
 
@@ -37,8 +64,8 @@ class UserUpdate(BaseModel):
 
 
 @router.get("/users", response_model=Response[List[dict]])
-async def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """List all users"""
+async def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    """List all users (admin only — username/last-login enumeration)"""
     rows = db.query(User).order_by(User.created_at.desc()).all()
     
     return Response(data=[{
@@ -68,6 +95,9 @@ async def create_user(
     if db.query(User).filter(User.username == request.username).first():
         return Response(code=409, msg="用户名已存在")
     
+    if request.role not in VALID_ROLES:
+        return Response(code=400, msg=f"角色必须是 {'/'.join(VALID_ROLES)} 之一")
+
     user = User(
         username=request.username,
         password_hash=get_password_hash(request.password),
@@ -97,6 +127,8 @@ async def update_user(
     if request.nickname is not None:
         user.nickname = request.nickname
     if request.role is not None:
+        if request.role not in VALID_ROLES:
+            return Response(code=400, msg=f"角色必须是 {'/'.join(VALID_ROLES)} 之一")
         user.role = request.role
     if request.is_active is not None:
         user.is_active = request.is_active
@@ -135,22 +167,13 @@ async def delete_user(
 
 @router.get("/config", response_model=Response[Dict[str, List[dict]]])
 async def get_config(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Get all system config (grouped)"""
+    """Get all system config (grouped). Secret values are never returned."""
     rows = db.query(SystemConfig).order_by(SystemConfig.group_name, SystemConfig.id).all()
-    
+
     groups = {}
     for r in rows:
-        if r.group_name not in groups:
-            groups[r.group_name] = []
-        groups[r.group_name].append({
-            "id": r.id,
-            "key": r.key,
-            "value": r.value,
-            "label": r.label,
-            "description": r.description,
-            "group_name": r.group_name
-        })
-    
+        groups.setdefault(r.group_name, []).append(_mask_config_row(r))
+
     return Response(data=groups)
 
 
@@ -164,41 +187,66 @@ async def save_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user)
 ):
-    """Save system config (admin only)"""
-    valid_keys = {r.key for r in db.query(SystemConfig).all()}
+    """Save system config (admin only).
 
-    saved = 0
+    Secret keys are write-only: sending "" keeps the existing value (the form
+    never has the real value back — see ``_mask_config_row``).
+    Unknown keys are rejected loudly. They used to be dropped with ``continue``,
+    so an admin could tighten ``login_max_attempts`` and get "保存成功" while
+    ``saved=0`` and the runtime kept the env default — a silent policy failure.
+    """
+    rows = {r.key: r for r in db.query(SystemConfig).all()}
+    unknown = [k for k in request.updates if k not in rows]
+    if unknown:
+        return Response(
+            code=400,
+            msg=f"以下配置项不存在，未保存：{', '.join(sorted(unknown))}。"
+                f"请先在系统配置初始化中加入这些 key。",
+        )
+
+    saved, kept = 0, []
     for key, value in request.updates.items():
-        if key not in valid_keys:
+        cfg = rows[key]
+        text = str(value)
+        if _is_secret_key(key) and not text.strip():
+            # 留空 = 没改。绝不能把已配置的密钥冲成空串。
+            kept.append(key)
             continue
-        cfg = db.query(SystemConfig).filter(SystemConfig.key == key).first()
-        if cfg:
-            cfg.value = str(value)
-            cfg.updated_at = local_now()
-            saved += 1
-    
+        cfg.value = text
+        cfg.updated_at = local_now()
+        saved += 1
+
     db.commit()
-    
-    return Response(msg=f"配置保存成功，共更新 {saved} 项")
+
+    msg = f"配置保存成功，共更新 {saved} 项"
+    if kept:
+        msg += f"；{len(kept)} 项密钥留空已保持原值"
+    return Response(msg=msg, data={"saved": saved, "kept": kept})
 
 
 @router.get("/es-default", response_model=Response[dict])
 async def get_es_default(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Get ES default config for rule creation"""
+    """Get ES default config for rule creation.
+
+    The password is write-only: callers only learn whether one is configured.
+    Rule creation never needs it — the backend reads ES creds from SystemConfig.
+    """
     cfg_keys = ["es_host", "es_port", "es_scheme", "es_verify_certs", "es_user", "es_password", "es_index"]
     cfg = {}
-    
+
     for key in cfg_keys:
         row = db.query(SystemConfig).filter(SystemConfig.key == key).first()
         cfg[key] = row.value if row else ""
-    
+
     return Response(data={
         "host": cfg.get("es_host", "localhost"),
         "port": cfg.get("es_port", "9200"),
         "scheme": cfg.get("es_scheme", "https"),
         "verify_certs": cfg.get("es_verify_certs", "false"),
         "user": cfg.get("es_user", ""),
-        "password": cfg.get("es_password", ""),
+        # 不回传明文；建规则用不到它，后端自己从 SystemConfig 读
+        "password": "",
+        "password_set": bool((cfg.get("es_password") or "").strip()),
         "default_index": cfg.get("es_index", "security-logs-*")
     })
 
@@ -460,7 +508,7 @@ async def login_logs(
     page_size: int = 20,
     status: str = "",
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_admin_user)
 ):
     """Get login logs（兼容接口，内部改为查询日志中心 OperationLog 表 log_type='login'）"""
     from app.models.operation_log import OperationLog

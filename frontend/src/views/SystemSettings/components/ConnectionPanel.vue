@@ -24,6 +24,7 @@
         <div class="preview-row"><span class="preview-label">主机</span><span class="preview-val mono">{{ esForm.es_scheme }}://{{ esForm.es_host || '未配置' }}:{{ esForm.es_port }}</span></div>
         <div class="preview-row"><span class="preview-label">默认索引</span><span class="preview-val mono">{{ esForm.es_index || '未配置' }}</span></div>
         <div class="preview-row"><span class="preview-label">用户名</span><span class="preview-val">{{ esForm.es_user || '-' }}</span></div>
+        <div class="preview-row"><span class="preview-label">密码</span><span class="preview-val">{{ secretSet.es_password ? '已配置' : '未配置' }}</span></div>
         <div class="preview-row"><span class="preview-label">忽略证书</span><span class="preview-val">{{ esForm.es_verify_certs === 'false' ? '是' : '否' }}</span></div>
       </div>
       <!-- 编辑模式 -->
@@ -36,7 +37,7 @@
         </el-row>
         <el-row :gutter="16">
           <el-col :span="8"><el-form-item label="用户名"><el-input v-model="esForm.es_user" placeholder="elastic" /></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="密码"><el-input v-model="esForm.es_password" type="password" show-password placeholder="密码" /></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="密码"><el-input v-model="esForm.es_password" type="password" show-password :placeholder="secretPlaceholder('es_password', '密码')" /></el-form-item></el-col>
           <el-col :span="4"><el-form-item label="忽略证书"><el-switch v-model="esForm.es_verify_certs" active-value="false" inactive-value="true" /></el-form-item></el-col>
         </el-row>
       </el-form>
@@ -67,6 +68,7 @@
         <div class="preview-row"><span class="preview-label">主机</span><span class="preview-val mono">{{ mysqlForm.mysql_host || '未配置' }}:{{ mysqlForm.mysql_port }}</span></div>
         <div class="preview-row"><span class="preview-label">数据库</span><span class="preview-val mono">{{ mysqlForm.mysql_database || '未配置' }}</span></div>
         <div class="preview-row"><span class="preview-label">用户名</span><span class="preview-val">{{ mysqlForm.mysql_user || '-' }}</span></div>
+        <div class="preview-row"><span class="preview-label">密码</span><span class="preview-val">{{ secretSet.mysql_password ? '已配置' : '未配置' }}</span></div>
       </div>
       <el-form v-else :model="mysqlForm" label-width="100px" size="default">
         <el-row :gutter="16">
@@ -76,7 +78,7 @@
         </el-row>
         <el-row :gutter="16">
           <el-col :span="8"><el-form-item label="用户名"><el-input v-model="mysqlForm.mysql_user" placeholder="root" /></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="密码"><el-input v-model="mysqlForm.mysql_password" type="password" show-password placeholder="密码" /></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="密码"><el-input v-model="mysqlForm.mysql_password" type="password" show-password :placeholder="secretPlaceholder('mysql_password', '密码')" /></el-form-item></el-col>
         </el-row>
       </el-form>
       <div v-if="editingMysql" class="card-footer">
@@ -105,7 +107,8 @@
       <div v-if="!editingGrafana" class="conn-preview">
         <div class="preview-row"><span class="preview-label">服务地址</span><span class="preview-val mono">{{ grafanaForm.grafana_url || '未配置' }}</span></div>
         <div class="preview-row"><span class="preview-label">认证方式</span><span class="preview-val">{{ grafanaForm.grafana_auth_mode === 'apikey' ? 'API Key' : '用户名+密码' }}</span></div>
-        <div v-if="grafanaForm.grafana_auth_mode === 'apikey'" class="preview-row"><span class="preview-label">API Key</span><span class="preview-val">{{ grafanaForm.grafana_api_key ? '********' : '-' }}</span></div>
+        <div v-if="grafanaForm.grafana_auth_mode === 'apikey'" class="preview-row"><span class="preview-label">API Key</span><span class="preview-val">{{ secretSet.grafana_api_key ? '已配置' : '未配置' }}</span></div>
+        <div v-else class="preview-row"><span class="preview-label">密码</span><span class="preview-val">{{ secretSet.grafana_password ? '已配置' : '未配置' }}</span></div>
       </div>
       <el-form v-else :model="grafanaForm" label-width="100px" size="default">
         <el-form-item label="服务地址"><el-input v-model="grafanaForm.grafana_url" placeholder="http://localhost:3000" /></el-form-item>
@@ -116,12 +119,12 @@
           </el-radio-group>
         </el-form-item>
         <template v-if="grafanaForm.grafana_auth_mode === 'apikey'">
-          <el-form-item label="API Key"><el-input v-model="grafanaForm.grafana_api_key" placeholder="Grafana API Key" type="password" show-password /></el-form-item>
+          <el-form-item label="API Key"><el-input v-model="grafanaForm.grafana_api_key" :placeholder="secretPlaceholder('grafana_api_key', 'Grafana API Key')" type="password" show-password /></el-form-item>
         </template>
         <template v-else>
           <el-row :gutter="16">
             <el-col :span="8"><el-form-item label="用户名"><el-input v-model="grafanaForm.grafana_user" placeholder="Grafana 用户名" /></el-form-item></el-col>
-            <el-col :span="8"><el-form-item label="密码"><el-input v-model="grafanaForm.grafana_password" type="password" show-password placeholder="Grafana 密码" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="密码"><el-input v-model="grafanaForm.grafana_password" type="password" show-password :placeholder="secretPlaceholder('grafana_password', 'Grafana 密码')" /></el-form-item></el-col>
           </el-row>
         </template>
       </el-form>
@@ -145,6 +148,8 @@ const {
   esForm,
   mysqlForm,
   grafanaForm,
+  secretSet,
+  secretPlaceholder,
   esSaving,
   esTesting,
   esTestResult,
@@ -197,24 +202,24 @@ const {
 }
 .preview-label {
   font-size: 13px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   min-width: 56px;
   flex-shrink: 0;
 }
 .preview-val {
   font-size: 13px;
-  color: #303133;
+  color: var(--el-text-color-primary);
   word-break: break-all;
 }
 .preview-val.mono {
   font-family: 'Courier New', monospace;
-  color: #409EFF;
+  color: var(--el-color-primary);
 }
 
 .card-title {
   font-size: 15px;
   font-weight: 600;
-  color: #333;
+  color: var(--el-text-color-primary);
 }
 
 .card-footer {
@@ -222,13 +227,13 @@ const {
   align-items: center;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--el-border-color-extra-light);
 }
 
 .test-msg {
   font-size: 13px;
   margin-left: 4px;
-  &.ok { color: #67c23a; }
-  &.fail { color: #f56c6c; }
+  &.ok { color: var(--el-color-success); }
+  &.fail { color: var(--el-color-danger); }
 }
 </style>

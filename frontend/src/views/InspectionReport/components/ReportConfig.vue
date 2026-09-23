@@ -121,25 +121,25 @@ const {
 <style scoped>
 .mb-16 { margin-bottom: 16px; }
 .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.pick-panel { margin-top: 14px; border: 1px solid #ebeef5; border-radius: 8px; padding: 14px 16px; background: #fafafa; }
+.pick-panel { margin-top: 14px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; padding: 14px 16px; background: var(--el-fill-color-light); }
 .pick-row { margin-bottom: 18px; }
 .pick-row:last-child { margin-bottom: 0; }
 .pick-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.pick-title { font-size: 13px; font-weight: 600; color: #303133; }
+.pick-title { font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); }
 .pick-actions { display: flex; gap: 2px; }
-.pick-box { max-height: 168px; overflow-y: auto; padding: 4px 2px; border: 1px solid #f0f0f0; border-radius: 6px; background: #fff; }
+.pick-box { max-height: 168px; overflow-y: auto; padding: 4px 2px; border: 1px solid var(--el-border-color-extra-light); border-radius: 6px; background: var(--el-bg-color); }
 .pick-box :deep(.el-checkbox-group) { display: flex; flex-wrap: wrap; gap: 8px; }
 .pick-box :deep(.el-checkbox) { margin-right: 0; margin-bottom: 0; }
-.pick-hint { font-size: 12px; color: #c0c4cc; margin-top: 8px; display: block; }
+.pick-hint { font-size: 12px; color: var(--el-text-color-placeholder); margin-top: 8px; display: block; }
 .pick-checks { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
 .pick-div { margin: 14px 0; }
-.order-box { border-top: 1px dashed #e4e7ed; padding-top: 4px; }
-.order-title { font-size: 12px; color: #909399; margin-bottom: 8px; }
-.order-item { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; background: #fff; border: 1px solid #ebeef5; border-radius: 6px; margin-bottom: 6px; }
-.order-name { font-size: 13px; color: #303133; }
+.order-box { border-top: 1px dashed var(--el-border-color-light); padding-top: 4px; }
+.order-title { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 8px; }
+.order-item { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; background: var(--el-bg-color); border: 1px solid var(--el-border-color-lighter); border-radius: 6px; margin-bottom: 6px; }
+.order-name { font-size: 13px; color: var(--el-text-color-primary); }
 .order-btns { display: flex; gap: 4px; }
 .overview-edit { margin-top: 4px; }
-.ov-label { font-size: 13px; font-weight: 600; color: #303133; display: block; margin-bottom: 8px; }
+.ov-label { font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); display: block; margin-bottom: 8px; }
 .ov-actions { margin-top: 8px; display: flex; align-items: center; gap: 10px; }
-.ov-hint { font-size: 12px; color: #909399; }
+.ov-hint { font-size: 12px; color: var(--el-text-color-secondary); }
 </style>

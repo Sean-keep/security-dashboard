@@ -28,7 +28,7 @@
               v-if="row.alert_trend?.length"
               :d="getTrendPath(row.alert_trend)"
               fill="none"
-              stroke="#409eff"
+              stroke="var(--el-color-primary)"
               stroke-width="2"
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -36,7 +36,7 @@
             <path
               v-if="row.alert_trend?.length"
               :d="getTrendArea(row.alert_trend)"
-              fill="#409eff"
+              fill="var(--el-color-primary)"
               fill-opacity="0.1"
             />
           </svg>
@@ -110,7 +110,7 @@ const getTrendArea = (trend) => {
 </script>
 
 <style lang="scss" scoped>
-.rule-name { font-weight: 600; color: #409EFF; }
+.rule-name { font-weight: 600; color: var(--el-color-primary); }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; }
 
 .trend-chart {
@@ -133,6 +133,6 @@ const getTrendArea = (trend) => {
 
 .trend-item .count {
   font-weight: 600;
-  color: #409eff;
+  color: var(--el-color-primary);
 }
 </style>

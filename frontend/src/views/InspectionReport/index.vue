@@ -65,8 +65,8 @@ onMounted(initPage)
 .summary { display: flex; gap: 32px; }
 .summary-dlg { margin-bottom: 0; }
 .summary-item { text-align: center; }
-.s-val { font-size: 24px; font-weight: 700; color: #303133; }
-.s-val.ok { color: #67c23a; }
-.s-val.bad { color: #f56c6c; }
-.s-label { font-size: 12px; color: #909399; margin-top: 4px; }
+.s-val { font-size: 24px; font-weight: 700; color: var(--el-text-color-primary); }
+.s-val.ok { color: var(--el-color-success); }
+.s-val.bad { color: var(--el-color-danger); }
+.s-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
 </style>

@@ -13,10 +13,11 @@ const includeAddresses = ref(true)
 const includeMonitoring = ref(true)
 const loading = ref(false)
 const currentReport = ref(null)
-const DEFAULT_SUMMARY = `1、无可用性问题，ospay线上服务器内存使用率峰值超过80%
-2、nginx日志发现7个ip攻击行为，无入侵成功迹象
-3、代理IP剩余流量:1116.17GB，预计还可以使用111天（预计每天消耗10G）
-4、短信网关余额：304.72372，预计还可以使用30天（预计每天消耗10）`
+const DEFAULT_SUMMARY = `【今日速览模板】
+1、<可用性结论，例：无可用性问题 / XX服务器XX资源使用率峰值XX%>
+2、<安全事件结论，例：nginx日志发现X个IP攻击行为，无入侵成功迹象>
+3、<资源余量1，例：XX服务剩余流量：XXX，预计可用XX天>
+4、<资源余量2，例：XX网关余额：XXX，预计可用XX天>`
 const summaryText = ref(DEFAULT_SUMMARY)
 const savingTpl = ref(false)
 
@@ -189,9 +190,18 @@ const generateReport = async () => {
     if (selectedScriptIds.value.length) params.script_ids = selectedScriptIds.value.join(',')
     if (selectedEndpointIds.value.length) params.endpoint_ids = selectedEndpointIds.value.join(',')
     params.summary_text = summaryText.value
+    // 生成时把板块顺序固化进报告 content 快照，导出读报告行而不是当时的 UI 状态
+    params.section_order = sectionOrder.value.join(',')
     const res = await reports.inspection(params)
     currentReport.value = res.data || null
-    if (currentReport.value) ElMessage.success('报告已生成并保存')
+    if (currentReport.value) {
+      // 后端尚未持久化 content.section_order 时本地补写，保证本条导出顺序正确
+      if (!currentReport.value.content) currentReport.value.content = {}
+      if (!Array.isArray(currentReport.value.content.section_order)) {
+        currentReport.value.content.section_order = [...sectionOrder.value]
+      }
+      ElMessage.success('报告已生成并保存')
+    }
   } catch (e) {
     ElMessage.error('生成巡检报告失败')
   } finally {
@@ -228,6 +238,15 @@ const previewReport = async (row) => {
 }
 
 // ── 导出（复用同一份数据） ──
+// HTML 转义：导出 Word/HTML 落盘文档，alert.handle_suggestion 等字段可被污染，
+// 必须对所有插值转义，防导出文件内嵌 XSS。
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
+
 const downloadFile = (content, filename, mime) => {
   const blob = new Blob([content], { type: mime })
   const url = URL.createObjectURL(blob)
@@ -238,81 +257,191 @@ const downloadFile = (content, filename, mime) => {
   URL.revokeObjectURL(url)
 }
 
-const buildText = (data) => {
-  const r = data
-  const L = []
-  L.push('═══════════════════════════════════════════════')
-  L.push(`        安全巡检报告 · ${r.report_date}`)
-  L.push('═══════════════════════════════════════════════')
-  L.push(`生成时间: ${r.generated_at}`)
-  if (r.summary_text) {
-    L.push('')
-    L.push('【今日速览】')
-    L.push(r.summary_text)
-    L.push('───────────────────────────────────────────────')
+// 板块顺序：优先报告 content 快照（生成时固化），缺失时回退当前 UI 状态
+const resolveSectionOrder = (r) => {
+  const snap = r?.content?.section_order
+  if (Array.isArray(snap) && snap.length === SECTION_KEYS.length && snap.every(k => SECTION_KEYS.includes(k))) {
+    return snap
   }
-  const txtParts = []
-  if (r.addresses !== null) txtParts.push(`当日攻击地址: ${r.address_count}`)
-  if (r.servers !== null) txtParts.push(`监控服务器: ${(r.servers || []).length}`)
-  if (r.script_count > 0) txtParts.push(`脚本执行: ${r.script_count}`)
-  if (r.servers !== null) txtParts.push(`监控: ${r.monitoring_connected ? '已连接' : '未连接'}`)
-  if (txtParts.length) L.push(txtParts.join(' ｜ '))
-  L.push('───────────────────────────────────────────────')
-  for (const key of sectionOrder.value) {
-    if (key === 'addresses' && r.addresses && r.addresses.length) {
+  return sectionOrder.value
+}
+
+// 板块描述符：buildText / buildHtml 共用同一份布局逻辑，避免两处 ~80% 重复导致行为漂移
+const SECTIONS = {
+  addresses: {
+    title: '攻击地址',
+    hasData: (r) => !!(r.addresses && r.addresses.length),
+    renderText: (r) => {
+      const L = []
       const critical = r.addresses.filter(a => a.severity === 'critical')
       const normal = r.addresses.filter(a => a.severity !== 'critical')
       if (critical.length) {
         L.push('【⚠️ 严重攻击地址】')
         critical.forEach((a, i) => {
-          const country = a.country ? `（${a.country}）` : ''
-          L.push(`${i + 1}. 攻击地址: ${a.ip_address}${country}`)
-          L.push(`   攻击时间: ${a.start_time} ~ ${a.end_time}`)
-          L.push(`   攻击次数: ${a.attack_count}`)
-          L.push(`   攻击域名: ${a.domain || '-'}`)
-          if (a.handle_suggestion) L.push(`   处置结果: ${a.handle_suggestion}`)
+          const country = a.country ? `（${esc(a.country)}）` : ''
+          L.push(`${i + 1}. 攻击地址: ${esc(a.ip_address)}${country}`)
+          L.push(`   攻击时间: ${esc(a.start_time)} ~ ${esc(a.end_time)}`)
+          L.push(`   攻击次数: ${esc(a.attack_count)}`)
+          L.push(`   攻击域名: ${esc(a.domain) || '-'}`)
+          if (a.handle_suggestion) L.push(`   处置结果: ${esc(a.handle_suggestion)}`)
         })
         L.push('')
       }
       if (normal.length) {
         L.push('【攻击地址】')
         normal.forEach((a, i) => {
-          const country = a.country ? `（${a.country}）` : ''
+          const country = a.country ? `（${esc(a.country)}）` : ''
           const lvl = { high: '高危', medium: '中危', low: '低危' }[a.severity] || ''
-          L.push(`${i + 1}. 攻击地址: ${a.ip_address}${country} [${lvl}]`)
-          L.push(`   攻击时间: ${a.start_time} ~ ${a.end_time}`)
-          L.push(`   持续时间: ${a.duration} 秒`)
-          L.push(`   攻击次数: ${a.attack_count}`)
-          L.push(`   攻击域名: ${a.domain || '-'}`)
+          L.push(`${i + 1}. 攻击地址: ${esc(a.ip_address)}${country} [${esc(lvl)}]`)
+          L.push(`   攻击时间: ${esc(a.start_time)} ~ ${esc(a.end_time)}`)
+          L.push(`   持续时间: ${esc(a.duration)} 秒`)
+          L.push(`   攻击次数: ${esc(a.attack_count)}`)
+          L.push(`   攻击域名: ${esc(a.domain) || '-'}`)
         })
       }
-      L.push('───────────────────────────────────────────────')
-    } else if (key === 'monitoring' && r.servers && r.servers.length) {
+      return L
+    },
+    renderHtml: (r) => {
+      const L = []
+      const critical = r.addresses.filter(a => a.severity === 'critical')
+      const normal = r.addresses.filter(a => a.severity !== 'critical')
+      if (critical.length) {
+        L.push('<h3 style="color:#f56c6c;">⚠️ 严重攻击地址</h3>')
+        critical.forEach((a, i) => {
+          const country = a.country ? `（${esc(a.country)}）` : ''
+          L.push(`<p style="border-left:3px solid #f56c6c;padding-left:10px;">`)
+          L.push(`<b>${i + 1}. ${esc(a.ip_address)}</b>${country}<br/>`)
+          L.push(`攻击时间: ${esc(a.start_time)} ~ ${esc(a.end_time)} ｜ 次数: ${esc(a.attack_count)}<br/>`)
+          L.push(`域名: ${esc(a.domain) || '-'}`)
+          if (a.handle_suggestion) L.push(`<br/><b style="color:#e6a23c;">处置结果：</b>${esc(a.handle_suggestion)}`)
+          L.push(`</p>`)
+        })
+      }
+      if (normal.length) {
+        L.push('<h3>攻击地址</h3>')
+        normal.forEach((a, i) => {
+          const country = a.country ? `（${esc(a.country)}）` : ''
+          const lvl = { high: '高危', medium: '中危', low: '低危' }[a.severity] || ''
+          L.push(`<p><b>${i + 1}. 攻击地址:</b> ${esc(a.ip_address)}${country} [${esc(lvl)}]<br/>`)
+          L.push(`攻击时间: ${esc(a.start_time)} ~ ${esc(a.end_time)}<br/>`)
+          L.push(`持续时间: ${esc(a.duration)} 秒<br/>`)
+          L.push(`攻击次数: ${esc(a.attack_count)}<br/>`)
+          L.push(`攻击域名: ${esc(a.domain) || '-'}</p>`)
+        })
+      }
+      return L
+    }
+  },
+  monitoring: {
+    title: '服务器监控',
+    hasData: (r) => !!(r.servers && r.servers.length),
+    renderText: (r) => {
+      const L = []
       L.push('【服务器监控】')
-      ;(r.servers || []).forEach((s, i) => {
-        L.push(`${i + 1}. ${s.alias || ''} ${s.instance}`)
-        L.push(`   CPU 均值 ${s.cpu?.avg ?? '-'}% / 峰值 ${s.cpu?.peak ?? '-'}%`)
-        L.push(`   内存 均值 ${s.memory?.avg ?? '-'}% / 峰值 ${s.memory?.peak ?? '-'}%`)
+      r.servers.forEach((s, i) => {
+        L.push(`${i + 1}. ${esc(s.alias) || ''} ${esc(s.instance)}`)
+        L.push(`   CPU 均值 ${esc(s.cpu?.avg ?? '-')}% / 峰值 ${esc(s.cpu?.peak ?? '-')}%`)
+        L.push(`   内存 均值 ${esc(s.memory?.avg ?? '-')}% / 峰值 ${esc(s.memory?.peak ?? '-')}%`)
         ;(s.disks || []).forEach((dk) => {
-          L.push(`   磁盘 ${dk.mountpoint} 均值 ${dk.avg ?? '-'}% / 峰值 ${dk.peak ?? '-'}%`)
+          L.push(`   磁盘 ${esc(dk.mountpoint)} 均值 ${esc(dk.avg ?? '-')}% / 峰值 ${esc(dk.peak ?? '-')}%`)
         })
       })
-      L.push('───────────────────────────────────────────────')
-    } else if (key === 'scripts' && r.scripts && r.scripts.length) {
+      return L
+    },
+    renderHtml: (r) => {
+      const L = []
+      L.push('<h3>服务器监控</h3>')
+      r.servers.forEach((s, i) => {
+        L.push(`<p><b>${i + 1}. ${esc(s.alias) || ''} ${esc(s.instance)}</b><br/>`)
+        L.push(`CPU 均值 ${esc(s.cpu?.avg ?? '-')}% / 峰值 ${esc(s.cpu?.peak ?? '-')}%<br/>`)
+        L.push(`内存 均值 ${esc(s.memory?.avg ?? '-')}% / 峰值 ${esc(s.memory?.peak ?? '-')}%<br/>`)
+        ;(s.disks || []).forEach((dk) => {
+          L.push(`磁盘 ${esc(dk.mountpoint)} 均值 ${esc(dk.avg ?? '-')}% / 峰值 ${esc(dk.peak ?? '-')}%<br/>`)
+        })
+        L.push('</p>')
+      })
+      return L
+    }
+  },
+  scripts: {
+    title: '脚本执行结果',
+    hasData: (r) => !!(r.scripts && r.scripts.length),
+    renderText: (r) => {
+      const L = []
       L.push('【脚本执行结果】')
-      ;(r.scripts || []).forEach((sc, i) => {
-        const status = sc.exit_code === 0 ? '' : ` [失败, 退出码 ${sc.exit_code}]`
-        L.push(`${i + 1}. ${sc.name}${status}`)
-        if (sc.stdout) L.push('   ' + sc.stdout.replace(/\n/g, '\n   '))
-        if (sc.stderr) L.push('   错误: ' + sc.stderr.replace(/\n/g, '\n   '))
+      r.scripts.forEach((sc, i) => {
+        const status = sc.exit_code === 0 ? '' : ` [失败, 退出码 ${esc(sc.exit_code)}]`
+        L.push(`${i + 1}. ${esc(sc.name)}${status}`)
+        if (sc.stdout) L.push('   ' + esc(sc.stdout).replace(/\n/g, '\n   '))
+        if (sc.stderr) L.push('   错误: ' + esc(sc.stderr).replace(/\n/g, '\n   '))
       })
-      L.push('───────────────────────────────────────────────')
-    } else if (key === 'ingested' && r.ingested && r.ingested.length) {
+      return L
+    },
+    renderHtml: (r) => {
+      const L = []
+      L.push('<h3>脚本执行结果</h3>')
+      r.scripts.forEach((sc, i) => {
+        const status = sc.exit_code === 0 ? '' : ` <span style="color:#f56c6c;">[失败, 退出码 ${esc(sc.exit_code)}]</span>`
+        L.push(`<p><b>${i + 1}. ${esc(sc.name)}</b>${status}<br/>`)
+        if (sc.stdout) L.push(`<pre>${esc(sc.stdout)}</pre>`)
+        if (sc.stderr) L.push(`<pre>错误: ${esc(sc.stderr)}</pre>`)
+        L.push('</p>')
+      })
+      return L
+    }
+  },
+  ingested: {
+    title: '接收数据（最近一条）',
+    hasData: (r) => !!(r.ingested && r.ingested.length),
+    renderText: (r) => {
+      const L = []
       L.push('【接收数据（最近一条）】')
-      ;(r.ingested || []).forEach((it, i) => {
-        L.push(`${i + 1}. 端口: ${it.endpoint_name} ｜ 接收时间: ${it.received_at}`)
-        if (it.payload) L.push('   ' + it.payload.replace(/\n/g, '\n   '))
+      r.ingested.forEach((it, i) => {
+        const who = it.sender_name ? ` ｜ 发送方: ${esc(it.sender_name)}` : ''
+        L.push(`${i + 1}. 端口: ${esc(it.endpoint_name)}${who} ｜ 接收时间: ${esc(it.received_at)}`)
+        if (it.payload) L.push('   ' + esc(it.payload).replace(/\n/g, '\n   '))
       })
+      return L
+    },
+    renderHtml: (r) => {
+      const L = []
+      L.push('<h3>接收数据（最近一条）</h3>')
+      r.ingested.forEach((it, i) => {
+        const who = it.sender_name ? ` ｜ 发送方: ${esc(it.sender_name)}` : ''
+        L.push(`<p><b>${i + 1}. ${esc(it.endpoint_name)}</b>${who} ｜ 接收时间: ${esc(it.received_at)}<br/>`)
+        if (it.payload) L.push(`<pre>${esc(it.payload)}</pre>`)
+        L.push('</p>')
+      })
+      return L
+    }
+  }
+}
+
+const buildText = (data) => {
+  const r = data
+  const L = []
+  L.push('═══════════════════════════════════════════════')
+  L.push(`        安全巡检报告 · ${esc(r.report_date)}`)
+  L.push('═══════════════════════════════════════════════')
+  L.push(`生成时间: ${esc(r.generated_at)}`)
+  if (r.summary_text) {
+    L.push('')
+    L.push('【今日速览】')
+    L.push(esc(r.summary_text))
+    L.push('───────────────────────────────────────────────')
+  }
+  const txtParts = []
+  if (r.addresses !== null) txtParts.push(`当日攻击地址: ${esc(r.address_count)}`)
+  if (r.servers !== null) txtParts.push(`监控服务器: ${esc((r.servers || []).length)}`)
+  if (r.script_count > 0) txtParts.push(`脚本执行: ${esc(r.script_count)}`)
+  if (r.servers !== null) txtParts.push(`监控: ${r.monitoring_connected ? '已连接' : '未连接'}`)
+  if (txtParts.length) L.push(txtParts.join(' ｜ '))
+  L.push('───────────────────────────────────────────────')
+  for (const key of resolveSectionOrder(r)) {
+    const sec = SECTIONS[key]
+    if (sec && sec.hasData(r)) {
+      L.push(...sec.renderText(r))
+      L.push('───────────────────────────────────────────────')
     }
   }
   L.push('═══════════════════════════════════════════════')
@@ -324,73 +453,22 @@ const buildHtml = (data) => {
   const L = []
   L.push('<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:word" xmlns="http://www.w3.org/TR/REC-html40">')
   L.push('<head><meta charset="utf-8"><title>巡检报告</title></head><body>')
-  L.push(`<h2>安全巡检报告 · ${r.report_date}</h2>`)
-  L.push(`<p>生成时间：${r.generated_at}</p>`)
+  L.push(`<h2>安全巡检报告 · ${esc(r.report_date)}</h2>`)
+  L.push(`<p>生成时间：${esc(r.generated_at)}</p>`)
   if (r.summary_text) {
     L.push('<h3>今日速览</h3>')
-    L.push(`<pre>${r.summary_text.replace(/</g, '&lt;')}</pre>`)
+    L.push(`<pre>${esc(r.summary_text)}</pre>`)
   }
   const htmlParts = []
-  if (r.addresses !== null) htmlParts.push(`当日攻击地址：${r.address_count}`)
-  if (r.servers !== null) htmlParts.push(`监控服务器：${(r.servers || []).length}`)
-  if (r.script_count > 0) htmlParts.push(`脚本执行：${r.script_count}`)
+  if (r.addresses !== null) htmlParts.push(`当日攻击地址：${esc(r.address_count)}`)
+  if (r.servers !== null) htmlParts.push(`监控服务器：${esc((r.servers || []).length)}`)
+  if (r.script_count > 0) htmlParts.push(`脚本执行：${esc(r.script_count)}`)
   if (r.servers !== null) htmlParts.push(`监控：${r.monitoring_connected ? '已连接' : '未连接'}`)
   if (htmlParts.length) L.push(`<p>${htmlParts.join(' ｜ ')}</p>`)
-  for (const key of sectionOrder.value) {
-    if (key === 'addresses' && r.addresses && r.addresses.length) {
-      const critical = r.addresses.filter(a => a.severity === 'critical')
-      const normal = r.addresses.filter(a => a.severity !== 'critical')
-      if (critical.length) {
-        L.push('<h3 style="color:#f56c6c;">⚠️ 严重攻击地址</h3>')
-        critical.forEach((a, i) => {
-          const country = a.country ? `（${a.country}）` : ''
-          L.push(`<p style="border-left:3px solid #f56c6c;padding-left:10px;">`)
-          L.push(`<b>${i + 1}. ${a.ip_address}</b>${country}<br/>`)
-          L.push(`攻击时间: ${a.start_time} ~ ${a.end_time} ｜ 次数: ${a.attack_count}<br/>`)
-          L.push(`域名: ${a.domain || '-'}`)
-          if (a.handle_suggestion) L.push(`<br/><b style="color:#e6a23c;">处置结果：</b>${a.handle_suggestion}`)
-          L.push(`</p>`)
-        })
-      }
-      if (normal.length) {
-        L.push('<h3>攻击地址</h3>')
-        normal.forEach((a, i) => {
-          const country = a.country ? `（${a.country}）` : ''
-          const lvl = { high: '高危', medium: '中危', low: '低危' }[a.severity] || ''
-          L.push(`<p><b>${i + 1}. 攻击地址:</b> ${a.ip_address}${country} [${lvl}]<br/>`)
-          L.push(`攻击时间: ${a.start_time} ~ ${a.end_time}<br/>`)
-          L.push(`持续时间: ${a.duration} 秒<br/>`)
-          L.push(`攻击次数: ${a.attack_count}<br/>`)
-          L.push(`攻击域名: ${a.domain || '-'}</p>`)
-        })
-      }
-    } else if (key === 'monitoring' && r.servers && r.servers.length) {
-      L.push('<h3>服务器监控</h3>')
-      ;(r.servers || []).forEach((s, i) => {
-        L.push(`<p><b>${i + 1}. ${s.alias || ''} ${s.instance}</b><br/>`)
-        L.push(`CPU 均值 ${s.cpu?.avg ?? '-'}% / 峰值 ${s.cpu?.peak ?? '-'}%<br/>`)
-        L.push(`内存 均值 ${s.memory?.avg ?? '-'}% / 峰值 ${s.memory?.peak ?? '-'}%<br/>`)
-        ;(s.disks || []).forEach((dk) => {
-          L.push(`磁盘 ${dk.mountpoint} 均值 ${dk.avg ?? '-'}% / 峰值 ${dk.peak ?? '-'}%<br/>`)
-        })
-        L.push('</p>')
-      })
-    } else if (key === 'scripts' && r.scripts && r.scripts.length) {
-      L.push('<h3>脚本执行结果</h3>')
-      ;(r.scripts || []).forEach((sc, i) => {
-        const status = sc.exit_code === 0 ? '' : ` <span style="color:#f56c6c;">[失败, 退出码 ${sc.exit_code}]</span>`
-        L.push(`<p><b>${i + 1}. ${sc.name}</b>${status}<br/>`)
-        if (sc.stdout) L.push(`<pre>${sc.stdout.replace(/</g, '&lt;')}</pre>`)
-        if (sc.stderr) L.push(`<pre>错误: ${sc.stderr.replace(/</g, '&lt;')}</pre>`)
-        L.push('</p>')
-      })
-    } else if (key === 'ingested' && r.ingested && r.ingested.length) {
-      L.push('<h3>接收数据（最近一条）</h3>')
-      ;(r.ingested || []).forEach((it, i) => {
-        L.push(`<p><b>${i + 1}. ${it.endpoint_name}</b> ｜ 接收时间: ${it.received_at}<br/>`)
-        if (it.payload) L.push(`<pre>${it.payload.replace(/</g, '&lt;')}</pre>`)
-        L.push('</p>')
-      })
+  for (const key of resolveSectionOrder(r)) {
+    const sec = SECTIONS[key]
+    if (sec && sec.hasData(r)) {
+      L.push(...sec.renderHtml(r))
     }
   }
   L.push('</' + 'body></' + 'html>')

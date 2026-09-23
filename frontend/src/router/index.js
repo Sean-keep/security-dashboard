@@ -1,40 +1,28 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { getToken } from '@/api/token'
-import Login from '@/views/Login/index.vue'
-import MainLayout from '@/components/Layout/MainLayout.vue'
-import Dashboard from '@/views/Dashboard/index.vue'
-import AddressList from '@/views/AddressList/index.vue'
-import AlertList from '@/views/AlertList/index.vue'
-import RuleList from '@/views/RuleList/index.vue'
-import SystemSettings from '@/views/SystemSettings/index.vue'
-import InspectionScripts from '@/views/InspectionScripts/index.vue'
-import InspectionReport from '@/views/InspectionReport/index.vue'
-import InspectionMetrics from '@/views/InspectionMetrics/index.vue'
-import Remote from '@/views/Remote/index.vue'
-import RawLogQuery from '@/views/RawLogQuery/index.vue'
 
 const routes = [
-  { path: '/login', name: 'Login', component: Login },
+  { path: '/login', name: 'Login', component: () => import('@/views/Login/index.vue') },
   {
     path: '/',
-    component: MainLayout,
+    component: () => import('@/components/Layout/MainLayout.vue'),
     redirect: '/dashboard',
     children: [
-      { path: 'dashboard', name: 'Dashboard', component: Dashboard },
-      { path: 'addresses', name: 'AddressList', component: AddressList },
-      { path: 'alerts', name: 'AlertList', component: AlertList },
-      { path: 'rules', name: 'RuleList', component: RuleList },
-      { path: 'raw-logs', name: 'RawLogQuery', component: RawLogQuery },
+      { path: 'dashboard', name: 'Dashboard', component: () => import('@/views/Dashboard/index.vue') },
+      { path: 'addresses', name: 'AddressList', component: () => import('@/views/AddressList/index.vue') },
+      { path: 'alerts', name: 'AlertList', component: () => import('@/views/AlertList/index.vue') },
+      { path: 'rules', name: 'RuleList', component: () => import('@/views/RuleList/index.vue') },
+      { path: 'raw-logs', name: 'RawLogQuery', component: () => import('@/views/RawLogQuery/index.vue') },
       { path: 'settings', redirect: '/settings/users' },
-      { path: 'settings/users', name: 'SettingsUsers', component: SystemSettings },
-      { path: 'settings/connection', name: 'SettingsConnection', component: SystemSettings },
-      { path: 'settings/security', name: 'SettingsSecurity', component: SystemSettings },
-      { path: 'settings/logs', name: 'SettingsLogs', component: SystemSettings },
+      { path: 'settings/users', name: 'SettingsUsers', component: () => import('@/views/SystemSettings/index.vue') },
+      { path: 'settings/connection', name: 'SettingsConnection', component: () => import('@/views/SystemSettings/index.vue') },
+      { path: 'settings/security', name: 'SettingsSecurity', component: () => import('@/views/SystemSettings/index.vue') },
+      { path: 'settings/logs', name: 'SettingsLogs', component: () => import('@/views/SystemSettings/index.vue') },
       { path: 'inspection', redirect: '/inspection/scripts' },
-      { path: 'inspection/scripts', name: 'InspectionScripts', component: InspectionScripts },
-      { path: 'inspection/report', name: 'InspectionReport', component: InspectionReport },
-      { path: 'inspection/metrics', name: 'InspectionMetrics', component: InspectionMetrics },
-      { path: 'remote', name: 'Remote', component: Remote },
+      { path: 'inspection/scripts', name: 'InspectionScripts', component: () => import('@/views/InspectionScripts/index.vue') },
+      { path: 'inspection/report', name: 'InspectionReport', component: () => import('@/views/InspectionReport/index.vue') },
+      { path: 'inspection/metrics', name: 'InspectionMetrics', component: () => import('@/views/InspectionMetrics/index.vue') },
+      { path: 'remote', name: 'Remote', component: () => import('@/views/Remote/index.vue') },
     ]
   }
 ]

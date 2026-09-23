@@ -46,7 +46,7 @@ const {
 .card-title {
   font-size: 15px;
   font-weight: 600;
-  color: #333;
+  color: var(--el-text-color-primary);
 }
 
 .card-footer {
@@ -54,19 +54,19 @@ const {
   align-items: center;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--el-border-color-extra-light);
 }
 
 .test-msg {
   font-size: 13px;
   margin-left: 4px;
-  &.ok { color: #67c23a; }
-  &.fail { color: #f56c6c; }
+  &.ok { color: var(--el-color-success); }
+  &.fail { color: var(--el-color-danger); }
 }
 
 .form-hint {
   margin-left: 12px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 </style>

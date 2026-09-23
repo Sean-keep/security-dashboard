@@ -37,10 +37,16 @@ def main():
                 scheduler_service.load_all_rules()
                 scheduler_service.start()
             else:
+                # 与规则表对账：API 改了规则（新建/改周期/停用/删除）没有 IPC 能通知
+                # 到这个进程，只能靠这里收敛。见 SchedulerService.reconcile。
+                try:
+                    scheduler_service.reconcile()
+                except Exception as exc:
+                    print(f"⚠️ 对账失败: {exc}")
                 jobs = scheduler_service.scheduler.get_jobs()
                 if jobs:
                     next_run = jobs[0].next_run_time
-                    print(f"✅ 调度器正常，下次执行: {next_run}")
+                    print(f"✅ 调度器正常，{len(jobs)} 个任务，下次执行: {next_run}")
     except KeyboardInterrupt:
         print("\n🛑 收到中断信号，正在停止调度器...")
         scheduler_service.stop()

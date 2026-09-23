@@ -102,17 +102,21 @@
               <div :ref="el => registerChartRef(el, s.instance + '_mem', s.memory_series)" :data-key="s.instance + '_mem'" class="chart-container"></div>
             </div>
 
-            <!-- 磁盘（按挂载点） -->
-            <template v-for="dk in (s.disks || [])" :key="dk.mountpoint">
+            <!-- 磁盘（按挂载点，各自独立时序） -->
+            <template v-for="dk in (s.disks || [])" :key="s.instance + (dk.mountpoint || '/')">
               <div class="metric-row disk-row">
                 <div class="mr-header">
-                  <span class="mr-label">{{ dk.mountpoint === '/' ? '磁盘（/）' : '磁盘（/data/logs）' }}</span>
+                  <span class="mr-label">{{ dk.mountpoint === '/' ? '磁盘（/）' : '磁盘（' + (dk.mountpoint || '') + '）' }}</span>
                   <span class="mr-stat">
                     <el-tag type="info" size="small" effect="plain">均值 {{ dk.avg ?? '-' }}%</el-tag>
                     <el-tag :type="peakType(dk.peak)" size="small" effect="plain">峰值 {{ dk.peak ?? '-' }}%</el-tag>
                   </span>
                 </div>
-                <div :ref="el => registerChartRef(el, s.instance + '_disk', s.disk_series)" :data-key="s.instance + '_disk'" class="chart-container"></div>
+                <div
+                  :ref="el => registerChartRef(el, s.instance + '_disk_' + (dk.mountpoint || '/'), dk.series || s.disk_series)"
+                  :data-key="s.instance + '_disk_' + (dk.mountpoint || '/')"
+                  class="chart-container"
+                ></div>
               </div>
             </template>
           </div>
@@ -153,6 +157,7 @@ const timePreset = ref('1h')
 const chartInstances = {}
 
 // Grafana panel embedding
+// 后端会补发 grafana_url（此前只有 prom_url）。为空时外层 v-if 直接隐藏整块，不渲染空 iframe
 const grafanaUrl = computed(() => metrics.value?.grafana_url || '')
 const showPanelInput = ref(false)
 const panelEmbedUrl = ref('')
@@ -216,9 +221,17 @@ const loadMetrics = async () => {
         const el = document.querySelector(`[data-key="${s.instance}_mem"]`)
         registerChartRef(el, s.instance + '_mem', s.memory_series)
       }
-      if (s.disk_series?.length) {
+      if (s.disk_series?.length && !(s.disks || []).length) {
         const el = document.querySelector(`[data-key="${s.instance}_disk"]`)
         registerChartRef(el, s.instance + '_disk', s.disk_series)
+      }
+      for (const dk of (s.disks || [])) {
+        const key = s.instance + '_disk_' + (dk.mountpoint || '/')
+        const series = dk.series || s.disk_series
+        if (series?.length) {
+          const el = document.querySelector(`[data-key="${key}"]`)
+          registerChartRef(el, key, series)
+        }
       }
     }
   })
@@ -273,7 +286,7 @@ onMounted(loadMetrics)
 .mb-16 { margin-bottom: 16px; }
 .card-header { display: flex; align-items: center; gap: 10px; }
 .card-title { font-weight: 600; font-size: 15px; }
-.card-sub { font-size: 12px; color: #909399; font-weight: normal; }
+.card-sub { font-size: 12px; color: var(--el-text-color-secondary); font-weight: normal; }
 
 /* 服务器卡片 */
 .server-list {
@@ -282,10 +295,10 @@ onMounted(loadMetrics)
   gap: 16px;
 }
 .server-card {
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 10px;
   padding: 18px 20px 14px;
-  background: #fafafa;
+  background: var(--el-fill-color-light);
   transition: box-shadow 0.2s;
 }
 .server-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
@@ -302,11 +315,11 @@ onMounted(loadMetrics)
   gap: 6px;
   min-width: 0;
 }
-.node-icon { color: #409EFF; flex-shrink: 0; }
+.node-icon { color: var(--el-color-primary); flex-shrink: 0; }
 .node-alias {
   font-weight: 700;
   font-size: 14px;
-  color: #303133;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -314,13 +327,13 @@ onMounted(loadMetrics)
 }
 .node-addr {
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-family: 'Courier New', monospace;
   flex-shrink: 0;
 }
 .node-addr.has-alias {
   font-size: 11px;
-  color: #c0c4cc;
+  color: var(--el-text-color-placeholder);
 }
 
 .alias-edit {
@@ -329,7 +342,7 @@ onMounted(loadMetrics)
   gap: 8px;
   margin-bottom: 12px;
   padding: 8px 12px;
-  background: #ecf5ff;
+  background: var(--el-color-primary-light-9);
   border-radius: 6px;
 }
 
@@ -342,34 +355,34 @@ onMounted(loadMetrics)
   align-items: center;
   margin-bottom: 6px;
 }
-.mr-label { font-size: 13px; color: #606266; font-weight: 500; }
+.mr-label { font-size: 13px; color: var(--el-text-color-regular); font-weight: 500; }
 .mr-stat { display: flex; gap: 6px; align-items: center; }
 
 /* ECharts 图表容器 */
 .chart-container { height: 60px; width: 100%; margin-bottom: 4px; }
 
 /* Grafana 面板嵌入 */
-.grafana-panel { margin-bottom: 16px; border: 1px solid #e4e7ed; border-radius: 8px; padding: 12px 16px; background: #f5f7fa; }
+.grafana-panel { margin-bottom: 16px; border: 1px solid var(--el-border-color-light); border-radius: 8px; padding: 12px 16px; background: var(--el-fill-color-light); }
 .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .panel-title { font-weight: 600; font-size: 14px; }
 .panel-input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-.grafana-iframe { width: 100%; height: 340px; border-radius: 6px; border: 1px solid #dcdfe6; }
+.grafana-iframe { width: 100%; height: 340px; border-radius: 6px; border: 1px solid var(--el-border-color); }
 
 /* 自定义监控 */
 .promql-code {
   font-family: 'Courier New', monospace;
   font-size: 12px;
-  color: #c7254e;
-  background: #fdf2f5;
+  color: var(--code-inline-fg);
+  background: var(--code-inline-bg);
   padding: 2px 6px;
   border-radius: 4px;
   word-break: break-all;
 }
 .metric-val { display: flex; flex-direction: column; gap: 1px; margin-right: 8px; }
-.val-host { font-size: 10px; color: #909399; }
-.val-num { font-size: 13px; font-weight: 600; color: #303133; font-family: 'Courier New', monospace; }
-.val-more { font-size: 11px; color: #909399; vertical-align: middle; }
-.empty-text { color: #909399; }
+.val-host { font-size: 10px; color: var(--el-text-color-secondary); }
+.val-num { font-size: 13px; font-weight: 600; color: var(--el-text-color-primary); font-family: 'Courier New', monospace; }
+.val-more { font-size: 11px; color: var(--el-text-color-secondary); vertical-align: middle; }
+.empty-text { color: var(--el-text-color-secondary); }
 
 .skeleton-card { min-height: 200px; }
 </style>

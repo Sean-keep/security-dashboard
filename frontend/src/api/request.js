@@ -106,8 +106,20 @@ const handleUnauthorized = async (originalConfig, originalError) => {
 request.interceptors.response.use(
   response => {
     const res = response.data
-    // 如果是 Blob 下载（如 CSV 导出），直接返回
+    // 如果是 Blob 下载（如 CSV 导出），直接返回（不走信封解包）。
+    // 服务端可在 Content-Disposition 里给出文件名；挂到 Blob.filename 供调用方优先使用。
     if (response.config?.responseType === 'blob') {
+      try {
+        const cd = response.headers?.['content-disposition'] || response.headers?.['Content-Disposition'] || ''
+        const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(cd)
+        const plain = /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i.exec(cd)
+        const raw = star?.[1] || plain?.[1] || plain?.[2]
+        if (raw) {
+          res.filename = decodeURIComponent(raw.trim())
+        }
+      } catch {
+        /* header missing or malformed — fall back to client-side name */
+      }
       return res
     }
     if (res && res.code === 200) {

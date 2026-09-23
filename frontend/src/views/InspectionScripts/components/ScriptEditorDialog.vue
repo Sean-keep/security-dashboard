@@ -112,7 +112,7 @@ defineExpose({ openCreate, editScript })
 /* 代码编辑器 */
 .code-editor-wrapper {
   width: 100%;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -126,14 +126,14 @@ defineExpose({ openCreate, editScript })
   justify-content: space-between;
   align-items: center;
   padding: 8px 16px;
-  background: #f5f7fa;
-  border-bottom: 1px solid #e4e7ed;
+  background: var(--el-fill-color-light);
+  border-bottom: 1px solid var(--el-border-color-light);
 }
 
 .code-lang {
   font-size: 13px;
   font-weight: 600;
-  color: #409eff;
+  color: var(--el-color-primary);
 }
 
 .code-textarea :deep(.el-textarea__inner) {

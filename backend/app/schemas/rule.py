@@ -61,17 +61,6 @@ class SeverityCondition(BaseModel):
     severity: str = Field(default="high", pattern="^(low|medium|high|critical)$")
 
 
-class ActionConfig(BaseModel):
-    """Action when rule triggers"""
-    type: str  # write_mysql / webhook / etc
-    table: Optional[str] = None
-    mapping: Optional[Dict[str, Any]] = None
-    # 危险等级
-    severity: str = Field(default="medium", pattern="^(low|medium|high|critical)$")
-    # 条件升級
-    severity_conditions: List[SeverityCondition] = Field(default_factory=list)
-
-
 class RuleCreate(BaseModel):
     """Create rule request"""
     name: str = Field(..., min_length=1, max_length=128)

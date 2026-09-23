@@ -106,12 +106,12 @@ onMounted(loadScripts)
   margin: 0;
   font-size: 22px;
   font-weight: 600;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 
 .script-count {
   font-size: 14px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 
 .action-right {
@@ -137,7 +137,7 @@ onMounted(loadScripts)
 
 .result-item {
   margin-bottom: 16px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--el-border-color-light);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -147,7 +147,7 @@ onMounted(loadScripts)
 }
 
 .result-header {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
   padding: 12px 16px;
   display: flex;
   justify-content: space-between;
@@ -169,8 +169,8 @@ onMounted(loadScripts)
 .code-block {
   margin: 0;
   padding: 16px;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--code-bg);
+  color: var(--code-fg);
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
   line-height: 1.6;

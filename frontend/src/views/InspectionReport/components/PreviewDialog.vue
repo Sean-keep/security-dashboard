@@ -76,9 +76,9 @@
         <template v-if="key === 'ingested' && previewData.ingested?.length">
           <el-divider content-position="left">接收数据（最近一条）</el-divider>
           <div class="script-list">
-            <div v-for="it in previewData.ingested" :key="it.endpoint_name" class="script-block">
+            <div v-for="(it, ii) in previewData.ingested" :key="it.endpoint_name + '-' + ii" class="script-block">
               <div class="script-head">
-                <span class="script-name">{{ it.endpoint_name }}</span>
+                <span class="script-name">{{ it.endpoint_name }}<template v-if="it.sender_name"> · {{ it.sender_name }}</template></span>
                 <span class="script-type">{{ it.received_at }}</span>
               </div>
               <pre class="script-out" v-if="it.payload">{{ it.payload }}</pre>
@@ -105,38 +105,38 @@ const {
 
 <style scoped>
 .overview { margin-top: 4px; }
-.ov-title { font-size: 14px; font-weight: 700; color: #303133; margin-bottom: 8px; }
-.ov-text { white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 13px; line-height: 1.7; color: #303133; background: #fafafa; border: 1px solid #ebeef5; border-radius: 6px; padding: 12px 14px; margin: 0; }
+.ov-title { font-size: 14px; font-weight: 700; color: var(--el-text-color-primary); margin-bottom: 8px; }
+.ov-text { white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 13px; line-height: 1.7; color: var(--el-text-color-primary); background: var(--el-fill-color-light); border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 12px 14px; margin: 0; }
 
 .server-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 16px; margin-top: 8px; }
-.server-card { border: 1px solid #e4e7ed; border-radius: 10px; padding: 18px 20px; background: #fafafa; }
+.server-card { border: 1px solid var(--el-border-color-light); border-radius: 10px; padding: 18px 20px; background: var(--el-fill-color-light); }
 .node-info { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; min-width: 0; }
-.node-icon { color: #409EFF; flex-shrink: 0; }
-.node-alias { font-weight: 700; font-size: 14px; color: #303133; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-.node-addr { font-size: 12px; color: #909399; font-family: 'Courier New', monospace; flex-shrink: 0; }
+.node-icon { color: var(--el-color-primary); flex-shrink: 0; }
+.node-alias { font-weight: 700; font-size: 14px; color: var(--el-text-color-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+.node-addr { font-size: 12px; color: var(--el-text-color-secondary); font-family: 'Courier New', monospace; flex-shrink: 0; }
 .metric-rows { display: flex; flex-direction: column; gap: 10px; }
 .metric-line { display: flex; align-items: center; gap: 12px; font-size: 13px; }
-.ml-label { width: 88px; color: #606266; font-weight: 500; flex-shrink: 0; }
-.ml-val { color: #303133; font-family: 'Courier New', monospace; }
+.ml-label { width: 88px; color: var(--el-text-color-regular); font-weight: 500; flex-shrink: 0; }
+.ml-val { color: var(--el-text-color-primary); font-family: 'Courier New', monospace; }
 
 .script-list { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; }
-.script-block { border: 1px solid #ebeef5; border-radius: 8px; padding: 12px 14px; background: #fcfcfc; }
+.script-block { border: 1px solid var(--el-border-color-lighter); border-radius: 8px; padding: 12px 14px; background: var(--el-fill-color-light); }
 .script-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.script-name { font-weight: 600; font-size: 14px; color: #303133; }
-.script-type { font-size: 12px; color: #909399; }
-.script-out { margin: 0; padding: 10px 12px; background: #0c1021; color: #d6e2ff; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; }
-.script-err { margin: 8px 0 0; padding: 10px 12px; background: #2b0d0d; color: #ffb4b4; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }
+.script-name { font-weight: 600; font-size: 14px; color: var(--el-text-color-primary); }
+.script-type { font-size: 12px; color: var(--el-text-color-secondary); }
+.script-out { margin: 0; padding: 10px 12px; background: var(--code-bg); color: var(--code-fg); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; }
+.script-err { margin: 8px 0 0; padding: 10px 12px; background: var(--code-bg); color: var(--code-fg); border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }
 
 .critical-card {
-  border: 1px solid #f56c6c; border-left: 4px solid #f56c6c; border-radius: 8px;
-  padding: 14px 16px; margin-bottom: 10px; background: #fef0f0;
+  border: 1px solid var(--el-color-danger); border-left: 4px solid var(--el-color-danger); border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 10px; background: var(--el-color-danger-light-9);
 }
 .critical-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.critical-ip { font-weight: 700; font-size: 15px; color: #303133; font-family: 'Courier New', monospace; }
-.critical-count { font-size: 13px; color: #f56c6c; font-weight: 600; margin-left: auto; }
+.critical-ip { font-weight: 700; font-size: 15px; color: var(--el-text-color-primary); font-family: 'Courier New', monospace; }
+.critical-count { font-size: 13px; color: var(--el-color-danger); font-weight: 600; margin-left: auto; }
 .critical-suggestion {
-  font-size: 13px; color: #303133; background: #fff; border: 1px solid #e4e7ed;
+  font-size: 13px; color: var(--el-text-color-primary); background: var(--el-bg-color); border: 1px solid var(--el-border-color-light);
   border-radius: 6px; padding: 8px 12px; line-height: 1.6;
 }
-.suggestion-label { font-weight: 600; color: #e6a23c; }
+.suggestion-label { font-weight: 600; color: var(--el-color-warning); }
 </style>

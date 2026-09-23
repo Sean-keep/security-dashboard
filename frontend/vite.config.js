@@ -15,7 +15,8 @@ export default defineConfig({
       output: {
         manualChunks: {
           'element-plus': ['element-plus'],
-          'vue-core': ['vue', 'vue-router', 'pinia']
+          'vue-core': ['vue', 'vue-router', 'pinia'],
+          'echarts': ['echarts']
         }
       }
     }

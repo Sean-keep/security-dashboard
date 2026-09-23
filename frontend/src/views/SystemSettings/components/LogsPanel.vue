@@ -76,7 +76,7 @@ const {
 .card-title {
   font-size: 15px;
   font-weight: 600;
-  color: #333;
+  color: var(--el-text-color-primary);
 }
 
 .pagination-wrap {
