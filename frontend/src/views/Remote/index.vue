@@ -33,7 +33,7 @@
         <el-table-column prop="user_agent" label="User-Agent" min-width="140" show-overflow-tooltip />
         <el-table-column prop="payload_shape" label="载荷形状" min-width="140" show-overflow-tooltip />
         <el-table-column prop="send_count" label="次数" width="70" sortable />
-        <el-table-column prop="last_seen_at" label="最近接收" width="160" />
+        <el-table-column prop="last_seen_at" label="最近接收" width="180" show-overflow-tooltip />
         <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
             <div class="ops">
@@ -139,7 +139,7 @@
         </el-table-column>
         <el-table-column prop="description" label="说明" min-width="150" show-overflow-tooltip />
         <el-table-column prop="count" label="接收数" width="80" sortable />
-        <el-table-column prop="created_at" label="创建时间" width="160" />
+        <el-table-column prop="created_at" label="创建时间" width="180" show-overflow-tooltip />
         <el-table-column label="Token" width="80" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.has_token" type="success" size="small">已设置</el-tag>

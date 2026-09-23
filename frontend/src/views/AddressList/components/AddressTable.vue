@@ -36,8 +36,8 @@
         </template>
       </el-table-column>
       <el-table-column prop="domain" label="攻击域名" min-width="150" show-overflow-tooltip />
-      <el-table-column prop="start_time" label="首次攻击时间" width="170" sortable="custom" />
-      <el-table-column prop="end_time" label="最近攻击时间" width="170" sortable="custom" />
+      <el-table-column prop="start_time" label="首次攻击时间" width="180" sortable="custom" show-overflow-tooltip />
+      <el-table-column prop="end_time" label="最近攻击时间" width="180" sortable="custom" show-overflow-tooltip />
       <el-table-column prop="duration" label="持续时间" width="110" align="center" sortable="custom">
         <template #default="{ row }">
           <span>{{ formatDuration(row.duration) }}</span>
@@ -51,7 +51,7 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="created_at" label="入库时间" width="170" sortable="custom" />
+      <el-table-column prop="created_at" label="入库时间" width="180" sortable="custom" show-overflow-tooltip />
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <el-button type="danger" link size="small" @click="blockOne(row)">封禁</el-button>

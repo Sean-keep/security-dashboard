@@ -31,7 +31,7 @@
             </el-table-column>
             <el-table-column prop="country" label="国家" width="130" show-overflow-tooltip />
             <el-table-column prop="domain" label="域名" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="start_time" label="起始时间" width="165" />
+            <el-table-column prop="start_time" label="起始时间" width="180" show-overflow-tooltip />
             <el-table-column prop="attack_count" label="次数" width="90" align="right" />
           </el-table>
         </template>

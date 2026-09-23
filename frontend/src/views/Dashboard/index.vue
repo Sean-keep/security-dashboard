@@ -111,7 +111,7 @@
             <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="时间" width="160" />
+        <el-table-column prop="created_at" label="时间" width="180" show-overflow-tooltip />
       </el-table>
     </el-card>
   </div>

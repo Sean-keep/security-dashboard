@@ -24,7 +24,7 @@
         </el-table-column>
         <el-table-column prop="login_count" label="登录次数" width="90" align="center" />
         <el-table-column prop="last_login" label="最后登录" width="160" />
-        <el-table-column prop="created_at" label="创建时间" width="160" />
+        <el-table-column prop="created_at" label="创建时间" width="180" show-overflow-tooltip />
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="openUserDialog(row)">编辑</el-button>

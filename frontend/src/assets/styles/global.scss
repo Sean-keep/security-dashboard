@@ -88,6 +88,22 @@ body {
     color: var(--el-text-color-primary);
     font-weight: 600;
   }
+  /* 单元格默认不断行 + 超宽省略。
+     Element Plus 的 .cell 会在词间断行，「2026-09-23 13:13:36」中间那个空格
+     就是断行点，时间列被劈成两行。需要多行的单元格（如告警标题/内容）自己
+     用块级子元素叠，不受这里影响。 */
+  .el-table__cell > .cell {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* 展开面板是多行的（接收数据列表、分页），不能被上面那条裁掉 */
+  .el-table__expanded-cell,
+  .el-table__expanded-cell > .cell {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
 }
 
 .el-dialog {

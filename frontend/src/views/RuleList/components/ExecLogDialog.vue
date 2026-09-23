@@ -5,7 +5,7 @@
       <el-button size="small" style="float:right" @click="loadExecutionLogs()" :loading="execLogLoading">刷新</el-button>
     </div>
     <el-table :data="execLogList" stripe size="small" v-loading="execLogLoading">
-      <el-table-column prop="executed_at" label="执行时间" width="170" />
+      <el-table-column prop="executed_at" label="执行时间" width="180" show-overflow-tooltip />
       <el-table-column prop="alert_count" label="告警数" width="80" align="center" />
       <el-table-column prop="status" label="状态" width="80" align="center">
         <template #default="{ row }">

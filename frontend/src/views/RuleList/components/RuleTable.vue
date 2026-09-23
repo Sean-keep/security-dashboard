@@ -43,7 +43,7 @@
         </el-tooltip>
       </template>
     </el-table-column>
-    <el-table-column prop="last_run" label="上次执行" width="160" />
+    <el-table-column prop="last_run" label="上次执行" width="180" show-overflow-tooltip />
     <el-table-column prop="is_enabled" label="状态" width="80" align="center">
       <template #default="{ row }">
         <el-switch v-model="row.is_enabled" size="small" @change="emit('toggle', row)" />

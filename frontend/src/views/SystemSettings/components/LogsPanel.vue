@@ -14,7 +14,7 @@
       </div>
     </template>
     <el-table :data="logList" stripe size="small">
-      <el-table-column prop="created_at" label="时间" width="170" />
+      <el-table-column prop="created_at" label="时间" width="180" show-overflow-tooltip />
       <el-table-column prop="log_type" label="类型" width="80" align="center">
         <template #default="{ row }">
           <el-tag :type="row.log_type === 'login' ? 'primary' : 'warning'" size="small">

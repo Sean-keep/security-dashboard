@@ -81,7 +81,7 @@
             <el-button type="primary" link size="small" @click.stop="openSuggestionDialog(row)">填写</el-button>
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="时间" width="160" />
+        <el-table-column prop="created_at" label="时间" width="180" show-overflow-tooltip />
         <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="openDetail(row)">详情</el-button>

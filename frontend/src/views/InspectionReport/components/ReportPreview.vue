@@ -60,8 +60,8 @@
           </el-table-column>
           <el-table-column prop="country" label="国家/地区" width="160" show-overflow-tooltip />
           <el-table-column prop="domain" label="关联域名" min-width="170" show-overflow-tooltip />
-          <el-table-column prop="start_time" label="起始时间" width="170" />
-          <el-table-column prop="end_time" label="结束时间" width="170" />
+          <el-table-column prop="start_time" label="起始时间" width="180" show-overflow-tooltip />
+          <el-table-column prop="end_time" label="结束时间" width="180" show-overflow-tooltip />
           <el-table-column prop="duration" label="持续(s)" width="100" align="right" />
           <el-table-column prop="attack_count" label="攻击次数" width="110" align="right" sortable />
         </el-table>

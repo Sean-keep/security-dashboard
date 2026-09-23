@@ -103,7 +103,7 @@
       <el-table :data="tableData" stripe size="small" v-loading="loading" max-height="600"
         @row-click="showDetail" highlight-current-row style="cursor:pointer">
         <el-table-column type="index" width="50" label="#" />
-        <el-table-column v-if="isColVisible('timestamp')" prop="@timestamp" label="时间" width="170" show-overflow-tooltip>
+        <el-table-column v-if="isColVisible('timestamp')" prop="@timestamp" label="时间" width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ formatTime(row['@timestamp']) }}</template>
         </el-table-column>
         <el-table-column v-if="isColVisible('src_ip')" label="源IP" width="140" show-overflow-tooltip>
@@ -128,7 +128,7 @@
         <el-table-column v-if="isColVisible('error_msg')" prop="error_msg" label="错误信息" min-width="200" show-overflow-tooltip />
         <el-table-column v-if="isColVisible('request')" prop="request" label="完整请求" min-width="180" show-overflow-tooltip />
         <el-table-column v-if="isColVisible('pid')" prop="pid" label="PID" width="100" show-overflow-tooltip />
-        <el-table-column v-if="isColVisible('log_time')" prop="log_time" label="日志时间" width="160" show-overflow-tooltip />
+        <el-table-column v-if="isColVisible('log_time')" prop="log_time" label="日志时间" width="180" show-overflow-tooltip />
       </el-table>
 
       <el-empty v-if="!loading && !tableData.length" description="无匹配日志" :image-size="80" />
