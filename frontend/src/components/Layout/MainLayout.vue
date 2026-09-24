@@ -9,7 +9,7 @@
           </svg>
         </div>
         <transition name="fade">
-          <span v-if="!isCollapse" class="logo-text">安全巡检平台</span>
+          <span v-if="!isCollapse" class="logo-text">{{ ui.siteTitle }}</span>
         </transition>
       </div>
 
@@ -40,6 +40,10 @@
         <el-menu-item index="/rules">
           <el-icon><Connection /></el-icon>
           <template #title>规则管理</template>
+        </el-menu-item>
+        <el-menu-item index="/scheduler">
+          <el-icon><Clock /></el-icon>
+          <template #title>调度中心</template>
         </el-menu-item>
 
         <!-- 日常巡检（父级，点击后展开子项）-->
@@ -86,6 +90,14 @@
             <span class="sub-dot">·</span>
             <template #title>用户管理</template>
           </el-menu-item>
+          <el-menu-item index="/settings/permissions">
+            <span class="sub-dot">·</span>
+            <template #title>权限管理</template>
+          </el-menu-item>
+          <el-menu-item index="/settings/ui">
+            <span class="sub-dot">·</span>
+            <template #title>界面管理</template>
+          </el-menu-item>
           <el-menu-item index="/settings/connection">
             <span class="sub-dot">·</span>
             <template #title>连接设置</template>
@@ -122,17 +134,31 @@
           </el-breadcrumb>
         </div>
         <div class="header-right">
-          <el-tooltip placement="bottom" :disabled="!schedulerJobs.length">
+          <el-tooltip placement="bottom" :disabled="!schedulerJobs.length && schedulerRunning">
             <template #content>
-              <div v-for="job in schedulerJobs" :key="job.id" style="padding:2px 0;">
-                <span style="color: var(--el-color-success);">●</span> {{ job.name }}
-                <span v-if="job.next_run" style="color: var(--el-text-color-secondary); margin-left: 6px;">下次: {{ job.next_run }}</span>
+              <div v-if="schedulerProblems.length" class="sched-tip-problems">
+                <div v-for="(p, i) in schedulerProblems" :key="i" class="sched-tip-problem">⚠ {{ p }}</div>
+              </div>
+              <div v-if="schedulerHeartbeatAt" class="sched-tip-meta">
+                心跳 {{ schedulerHeartbeatAt }}（{{ relTime(schedulerHeartbeatAge) }}）
+                <template v-if="schedulerActivityAt">
+                  ｜最近跑完 {{ relTime(schedulerActivityAge) }}
+                </template>
+              </div>
+              <div v-for="job in schedulerJobs" :key="job.id" class="sched-tip-row">
+                <span :style="{ color: jobDotColor(job) }">●</span> {{ job.name }}
+                <span v-if="job.schedule" class="sched-tip-schedule">{{ job.schedule }}</span>
+                <span v-if="job.next_run" class="sched-tip-next">下次: {{ job.next_run }}</span>
+                <span v-if="job.last_run" class="sched-tip-next">
+                  上次: {{ job.last_run }}（{{ statusText(job.last_status) }}
+                  <template v-if="job.duration_ms">，{{ (job.duration_ms / 1000).toFixed(1) }}s</template>）
+                </span>
               </div>
             </template>
-            <div class="scheduler-status">
+            <router-link to="/scheduler" class="scheduler-status" :class="{ 'is-down': !schedulerRunning }">
               <span class="status-dot" :class="schedulerRunning ? 'online' : 'offline'"></span>
               <span class="status-text">调度器: {{ schedulerJobs.length }}个任务</span>
-            </div>
+            </router-link>
           </el-tooltip>
           <el-dropdown @command="handleUserCommand">
             <span class="user-info">
@@ -186,37 +212,74 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
+import { useUiStore } from '@/store/ui'
 import { auth, scheduler } from '@/api'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const ui = useUiStore()
 
-const isCollapse = ref(false)
+const isCollapse = ref(ui.sidebarCollapse)
 
 // ── 调度器状态 ──
+// 只给个红点说「坏了」是不够的 —— tooltip 里要写清为什么坏了、每条任务上次
+// 什么时候跑、跑成什么样。这几项 status 接口本来就返回了，早先全被丢掉。
 const schedulerRunning = ref(false)
 const schedulerJobs = ref([])
+const schedulerProblems = ref([])
+const schedulerHeartbeatAt = ref(null)
+const schedulerHeartbeatAge = ref(null)
+const schedulerActivityAt = ref(null)
+const schedulerActivityAge = ref(null)
 let schedulerTimer = null
+
+const statusText = (s) => ({ success: '成功', error: '失败', missed: '漏跑' }[s] || '未跑过')
+const jobDotColor = (job) => {
+  if (job.schedule_error || job.last_status === 'error') return 'var(--el-color-danger)'
+  if (job.last_status === 'missed' || job.stale) return 'var(--el-color-warning)'
+  if (job.last_status === 'success') return 'var(--el-color-success)'
+  return 'var(--el-text-color-disabled)'
+}
+const relTime = (secs) => {
+  if (secs === null || secs === undefined) return '—'
+  const s = Number(secs) || 0
+  if (s < 60) return `${s} 秒前`
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`
+  return `${Math.floor(s / 86400)} 天前`
+}
 
 const fetchSchedulerStatus = async () => {
   try {
     const res = await scheduler.status()
     // res 已经是 response.data（经过拦截器），再取 .data 是实际负载
-    // {code:200, data:{running, heartbeat_at, jobs:[...]}}
+    // {code:200, data:{running, heartbeat_at, jobs:[...], problems:[...]}}
     const payload = res.data || {}
     schedulerRunning.value = payload.running ?? false
     schedulerJobs.value = payload.jobs || []
+    schedulerProblems.value = payload.problems || []
+    schedulerHeartbeatAt.value = payload.heartbeat_at
+    schedulerHeartbeatAge.value = payload.heartbeat_age_seconds
+    schedulerActivityAt.value = payload.last_activity_at
+    schedulerActivityAge.value = payload.last_activity_age_seconds
   } catch {
     schedulerRunning.value = false
     schedulerJobs.value = []
+    schedulerProblems.value = ['调度状态接口不可用']
+    schedulerHeartbeatAt.value = null
+    schedulerHeartbeatAge.value = null
+    schedulerActivityAt.value = null
+    schedulerActivityAge.value = null
   }
 }
 
 onMounted(() => {
   // cookie 会话恢复：拉取当前用户（失败则由 401 拦截器处理）
   userStore.fetchMe().catch(() => {})
+  // 外观配置（主题/主色/标题/默认折叠）。失败也无所谓，用默认值。
+  ui.load().then(() => { isCollapse.value = ui.sidebarCollapse }).catch(() => {})
   fetchSchedulerStatus()
   schedulerTimer = setInterval(fetchSchedulerStatus, 30000)
 })
@@ -237,10 +300,13 @@ const routeTitles = {
   '/addresses': { parent: '', title: '地址列表' },
   '/alerts': { parent: '', title: '告警管理' },
   '/rules': { parent: '', title: '规则管理' },
+  '/scheduler': { parent: '', title: '调度中心' },
   '/inspection/scripts': { parent: '日常巡检', title: '脚本执行' },
   '/inspection/report': { parent: '日常巡检', title: '巡检报告' },
   '/inspection/metrics': { parent: '日常巡检', title: '系统监控' },
   '/settings/users': { parent: '系统设置', title: '用户管理' },
+  '/settings/permissions': { parent: '系统设置', title: '权限管理' },
+  '/settings/ui': { parent: '系统设置', title: '界面管理' },
   '/settings/connection': { parent: '系统设置', title: '连接设置' },
   '/settings/security': { parent: '系统设置', title: '安全设置' },
   '/settings/logs': { parent: '系统设置', title: '日志中心' },
@@ -396,9 +462,11 @@ const submitChangePwd = async () => {
 
 .scheduler-status {
   display: flex; align-items: center; gap: 6px;
-  padding: 4px 10px; border-radius: 6px; cursor: default;
+  padding: 4px 10px; border-radius: 6px; cursor: pointer;
   font-size: 13px; color: var(--el-text-color-regular);
+  text-decoration: none;
   &:hover { background: var(--el-fill-color-light); }
+  &.is-down { color: var(--el-color-danger); }
 }
 .status-dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
@@ -406,6 +474,39 @@ const submitChangePwd = async () => {
   &.offline { background: var(--el-color-danger); box-shadow: 0 0 4px var(--el-color-danger-light-5); }
 }
 .status-text { white-space: nowrap; }
+
+/* 调度器 tooltip：毛病清单 + 心跳 + 每条任务的上次/下次，统一放在这里 */
+.sched-tip-problems {
+  max-width: 360px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.sched-tip-problem {
+  color: var(--el-color-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.sched-tip-meta {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.sched-tip-row {
+  padding: 2px 0;
+  font-size: 12px;
+  max-width: 420px;
+}
+.sched-tip-schedule {
+  color: var(--el-text-color-secondary);
+  margin-left: 6px;
+}
+.sched-tip-next {
+  color: var(--el-text-color-secondary);
+  margin-left: 6px;
+}
 
 .layout-main {
   background: var(--page-bg);

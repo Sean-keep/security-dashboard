@@ -24,28 +24,39 @@ backend/migrations/
 | 文件 | 作用 | 引入时间 |
 | --- | --- | --- |
 | `20260922_ingest_endpoint_token.sql` | `ingest_endpoints` 新增 `token` 列 + 索引，并给旧端点回填 token | 2026-09-22 |
+| `20260923_alert_fingerprint_dedup.sql` | `alerts` 新增 `fingerprint` / `last_seen_at`，告警按指纹去重 | 2026-09-23 |
+| `20260923_ingest_idempotency_and_liveness.sql` | `ingest_logs` 新增 `sent_at` / `message_id` + 唯一索引；`ingest_endpoints.last_received_at` 存活时间 | 2026-09-23 |
+| `20260923_ingest_senders.sql` | 远程发送端识别（首次特征 + 配对绑定） | 2026-09-23 |
+| `20260923_rbac_separation.sql` | 三权分立角色集；把 `users.role='admin'` 升级为 `sys_admin` | 2026-09-23 |
+| `20260924_role_permissions.sql` | `role_permissions` 表：角色 → 权限点矩阵，含默认五行 | 2026-09-24 |
+| `20260924_scheduler_observability.sql` | `rule_execution_logs` 新增 `duration_ms` / `triggered_by`；把 `scheduler_*` 挪到 `runtime` 分组（不进系统设置页） | 2026-09-24 |
 | `mysql_init_dashboard.sql`（`docs/`） | 首次建库建表的基线 SQL | 历史 |
 
 ## 执行方式
 
+### 单体容器（推荐）
+
+```bash
+./scripts/deploy.sh migrate      # 跑 backend/migrations/ 下所有 .sql，全部幂等
+```
+
 ### Docker Compose
 
 ```bash
-docker exec -i sec-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" security_dashboard \
-  < backend/migrations/20260922_ingest_endpoint_token.sql
+docker compose exec -T mysql mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" security_dashboard \
+  < backend/migrations/<文件名>.sql
 ```
 
 ### 手工部署
 
 ```bash
-mysql -u<user> -p<pass> security_dashboard \
-  < backend/migrations/20260922_ingest_endpoint_token.sql
+mysql -u<user> -p<pass> security_dashboard < backend/migrations/<文件名>.sql
 ```
 
-执行后脚本会 `SELECT` 出每个 ingest 端点新生成的 `token`。
-把它填进发送端的 `X-Ingest-Token` 请求头即可；也可以之后在
-**远程端点管理** 页面调用 `POST /api/remote/endpoints/{id}/rotate-token` 换新 token
-（旧 token 立即失效）。
+> **注意**：`20260922_ingest_endpoint_token.sql` 末尾会 `SELECT` 出每个 ingest
+> 端点的 `token`，方便拷进发送端的 `X-Ingest-Token` 请求头。这在部署日志里会
+> 留下明文 —— 跑完记得确认日志去向。也可以之后在**远程端点管理**页面调用
+> `POST /api/remote/endpoints/{id}/rotate-token` 换新 token（旧 token 立即失效）。
 
 ## 什么时候该引入 Alembic
 

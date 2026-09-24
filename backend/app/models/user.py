@@ -15,7 +15,9 @@ class User(Base):
     username = Column(String(64), unique=True, nullable=False, index=True)
     password_hash = Column(String(256), nullable=False)
     nickname = Column(String(128), default="")
-    role = Column(String(32), default="operator")  # admin / operator / viewer
+    # 三权分立：sys_admin / sec_admin / audit_admin / operator / viewer
+    # 详见 app.core.permissions —— 那里是角色↔权限的唯一事实来源。
+    role = Column(String(32), default="operator")
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime, nullable=True)
     login_count = Column(Integer, default=0)

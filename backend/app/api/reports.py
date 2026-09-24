@@ -24,7 +24,8 @@ from app.models.ingest_endpoint import IngestEndpoint
 from app.models.ingest_log import IngestLog
 from app.models.ingest_sender import IngestSender
 from app.models.config import SystemConfig
-from app.api.security import get_current_admin_user, get_current_user
+from app.api.security import get_current_user
+from app.core.permissions import require_permission
 from app.api.inspect import (
     _compute_server_metrics,
     _require_script_execution_enabled,
@@ -56,8 +57,8 @@ def inspection_report(
     db: Session = Depends(get_db),
     # 会执行管理员录入的脚本 —— 与 /api/inspect/execute 同一道闸。
     # 早先这里是 get_current_user，等于给了任意登录用户一条绕过
-    # get_current_admin_user 和 ENABLE_SCRIPT_EXECUTION 的执行通道。
-    current_user: User = Depends(get_current_admin_user)
+    # 管理员鉴权和 ENABLE_SCRIPT_EXECUTION 的执行通道。
+    current_user: User = Depends(require_permission("operate"))
 ):
     _require_script_execution_enabled()
     now = now_cst()
@@ -324,7 +325,7 @@ def save_summary_template(
     body: dict = Body(...),
     db: Session = Depends(get_db),
     # 全局模板影响所有人生成的报告，收 admin
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(require_permission("operate"))
 ):
     """保存报告默认模板。兼容两种入参：
     1. {template: "..."} — 仅保存今日速览文本（向后兼容）
@@ -391,7 +392,7 @@ def delete_report(
     report_id: int,
     db: Session = Depends(get_db),
     # 报告是审计产物，不能让任意登录用户销毁
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(require_permission("operate"))
 ):
     r = db.query(InspectionReport).filter(InspectionReport.id == report_id).first()
     if not r:

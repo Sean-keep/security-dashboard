@@ -68,7 +68,7 @@ def test_login_success_sets_cookies_and_tokens(client):
     assert body["code"] == 200
     assert body["data"]["token"]
     assert body["data"]["refresh_token"]
-    assert body["data"]["user"]["role"] == "admin"
+    assert body["data"]["user"]["role"] == "sys_admin"
     # HttpOnly cookies must be present so the SPA can authenticate without localStorage.
     assert "sd_access" in resp.cookies
     assert "sd_refresh" in resp.cookies

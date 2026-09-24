@@ -49,6 +49,8 @@ class UserResponse(BaseModel):
     last_login: Optional[datetime] = None
     login_count: int = 0
     created_at: Optional[datetime] = None
+    # 由 app.core.permissions 派生，前端靠它显隐按钮 —— 不让前端自己硬编码角色名。
+    permissions: list[str] = []
 
     model_config = {"from_attributes": True}
 

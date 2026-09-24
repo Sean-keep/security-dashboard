@@ -2,10 +2,12 @@ import { ref, reactive } from 'vue'
 import { settings } from '@/api'
 import { useUserStore } from '@/store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { roleLabel } from '@/config/roles'
 
-// ── 用户管理 ──
+// ── 用户管理（账号钥匙 / 授权钥匙分开） ──
 const users = ref([])
-const userDialogVisible = ref(false)
+const accountDialogVisible = ref(false)
+const roleDialogVisible = ref(false)
 const isUserEdit = ref(false)
 const editUserId = ref(null)
 const userSaveLoading = ref(false)
@@ -18,24 +20,26 @@ const userRules = {
   role: [{ required: true, message: '请选择角色', trigger: 'change' }]
 }
 
-const roleLabel = (r) => ({ admin: '管理员', operator: '操作员', viewer: '查看者' }[r] || r)
+const roleTarget = ref(null)
+const roleForm = ref({ role: 'operator' })
 
 const loadUsers = async () => {
-  try { users.value = (await settings.users()).data } catch (e) { ElMessage.error('加载用户失败') }
+  try { users.value = (await settings.users()).data || [] } catch (e) { /* 无权时静默；UserPanel 有提示 */ }
 }
 
-const openUserDialog = (row) => {
+// 账号资料：昵称 / 密码 / 启用。**不含角色** —— 那是授权的活。
+const openAccountDialog = (row) => {
   if (row) {
     isUserEdit.value = true; editUserId.value = row.id
-    userForm.value = { username: row.username, password: '', nickname: row.nickname, role: row.role, is_active: row.is_active }
+    userForm.value = { username: row.username, password: '', nickname: row.nickname, is_active: row.is_active }
   } else {
     isUserEdit.value = false; editUserId.value = null
     userForm.value = { username: '', password: '', nickname: '', role: 'operator', is_active: true }
   }
-  userDialogVisible.value = true
+  accountDialogVisible.value = true
 }
 
-const submitUser = async () => {
+const submitAccount = async () => {
   try {
     await userFormRef.value.validate()
   } catch (_) {
@@ -43,20 +47,45 @@ const submitUser = async () => {
   }
   userSaveLoading.value = true
   try {
-    const payload = { ...userForm.value }
     if (isUserEdit.value) {
-      if (!payload.password) delete payload.password
+      const payload = {
+        nickname: userForm.value.nickname,
+        is_active: userForm.value.is_active,
+      }
+      if (userForm.value.password) payload.password = userForm.value.password
       await settings.updateUser(editUserId.value, payload)
-      ElMessage.success('用户更新成功')
+      ElMessage.success('账号更新成功')
     } else {
-      await settings.createUser(payload)
+      await settings.createUser({ ...userForm.value })
       ElMessage.success('用户创建成功')
     }
-    userDialogVisible.value = false
+    accountDialogVisible.value = false
     loadUsers()
   } catch (e) {
     // axios 拦截器已经 showMessage 了，这里仅作兜底
-    console.error('submitUser error:', e)
+    console.error('submitAccount error:', e)
+  } finally {
+    userSaveLoading.value = false
+  }
+}
+
+// 授权：只改角色。安全管理员的钥匙，系统管理员也开不了这扇门。
+const openRoleDialog = (row) => {
+  roleTarget.value = row
+  roleForm.value = { role: row.role }
+  roleDialogVisible.value = true
+}
+
+const submitRole = async () => {
+  if (!roleTarget.value) return
+  userSaveLoading.value = true
+  try {
+    await settings.updateUserRole(roleTarget.value.id, roleForm.value.role)
+    ElMessage.success('角色已更新')
+    roleDialogVisible.value = false
+    loadUsers()
+  } catch (e) {
+    console.error('submitRole error:', e)
   } finally {
     userSaveLoading.value = false
   }
@@ -64,7 +93,11 @@ const submitUser = async () => {
 
 const deleteUser = (row) => {
   ElMessageBox.confirm(`确定删除用户「${row.username}」？`, '确认', { type: 'warning' })
-    .then(async () => { await settings.deleteUser(row.id); ElMessage.success('删除成功'); loadUsers() })
+    .then(async () => {
+      await settings.deleteUser(row.id)
+      ElMessage.success('删除成功')
+      loadUsers()
+    })
     .catch(() => {})
 }
 
@@ -227,17 +260,22 @@ export function useSystemSettings() {
     userStore,
     // users
     users,
-    userDialogVisible,
+    accountDialogVisible,
+    roleDialogVisible,
     isUserEdit,
     editUserId,
     userSaveLoading,
     userFormRef,
     userForm,
     userRules,
+    roleTarget,
+    roleForm,
     roleLabel,
     loadUsers,
-    openUserDialog,
-    submitUser,
+    openAccountDialog,
+    openRoleDialog,
+    submitAccount,
+    submitRole,
     deleteUser,
     // connection
     esForm,

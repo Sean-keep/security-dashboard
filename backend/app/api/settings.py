@@ -13,7 +13,25 @@ from app.models.base import get_db
 from app.models.user import User
 from app.models.config import SystemConfig
 from app.schemas.common import Response
-from app.api.security import get_current_user, get_current_admin_user, get_password_hash
+from app.api.security import get_current_user, get_password_hash
+from app.core.permissions import (
+    CAN_ASSIGN_MATRIX,
+    PERMISSIONS,
+    ROLE_DESCRIPTIONS,
+    ROLE_LABELS,
+    ROLE_PERMISSIONS,
+    SEPARATION_OF_POWERS,
+    VALID_ROLES,
+    assert_can_modify_account,
+    ensure_role_permissions,
+    has_permission,
+    is_last_active_sys_admin,
+    normalize_role,
+    permission_matrix,
+    permissions_for,
+    require_permission,
+    save_role_permissions,
+)
 from app.core.policy import validate_password_strength
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
@@ -22,6 +40,17 @@ router = APIRouter(prefix="/settings", tags=["Settings"])
 # 正确模板，这里补上 —— 早先 GET /settings/config 会把 es_password / mysql_password /
 # grafana_api_key 等原样吐给任意登录用户，而 ConnectionPanel 界面上还显示成 ********。
 _SECRET_KEY_MARKERS = ("password", "api_key", "apikey", "token", "secret")
+
+
+def _is_runtime_key(key: str) -> bool:
+    """运行态键 —— 调度器自己在写的东西，不是配置。
+
+    早先 `scheduler_heartbeat` 会跟着 GET /settings/config 原样吐到系统设置页上，
+    分组还是 `general`：一串 ISO 时间戳混在可编辑配置里，看着像坏了的字段，
+    而且 PUT /settings/config 还允许人去改它 —— 改完调度器状态就假了。
+    """
+    k = (key or "").strip()
+    return k.startswith("scheduler_") or k.startswith("runtime_")
 
 
 def _is_secret_key(key: str) -> bool:
@@ -43,10 +72,13 @@ def _mask_config_row(row: SystemConfig) -> dict:
     }
 
 
-VALID_ROLES = ("admin", "operator", "viewer")
-
-
-# === User Management ===
+# === User Management（三权分立） ===
+#
+# 账号管理（manage_accounts）和授权（manage_authz）是两把不同的钥匙：
+#   系统管理员建号 / 禁用 / 重置密码 —— 建号时的初始角色属「初始任命」；
+#   安全管理员改角色 —— 后续变更属「授权」。
+# 把两件事塞进同一个接口（旧的 PUT /users 既改昵称又改角色）等于把两把钥匙
+# 合成一把，三权分立从接口层就漏了。所以角色变更单独开一个路由。
 
 class UserCreate(BaseModel):
     username: str
@@ -57,18 +89,18 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    """账号资料。**故意不含 role** —— 改角色走 /users/{id}/role。"""
     nickname: str = None
-    role: str = None
     is_active: bool = None
     password: str = None
 
 
-@router.get("/users", response_model=Response[List[dict]])
-async def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
-    """List all users (admin only — username/last-login enumeration)"""
-    rows = db.query(User).order_by(User.created_at.desc()).all()
-    
-    return Response(data=[{
+class UserRoleUpdate(BaseModel):
+    role: str
+
+
+def _user_row(u: User) -> dict:
+    return {
         "id": u.id,
         "username": u.username,
         "nickname": u.nickname,
@@ -76,25 +108,44 @@ async def list_users(db: Session = Depends(get_db), current_user: User = Depends
         "is_active": u.is_active,
         "last_login": u.last_login.isoformat() if u.last_login else None,
         "login_count": u.login_count or 0,
-        "created_at": u.created_at.isoformat() if u.created_at else None
-    } for u in rows])
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
+def _count_other_active_sys_admins(db: Session, exclude_id: int) -> int:
+    return (
+        db.query(User)
+        .filter(User.id != exclude_id, User.role == "sys_admin", User.is_active.is_(True))
+        .count()
+    )
+
+
+@router.get("/users", response_model=Response[List[dict]])
+async def list_users(
+    db: Session = Depends(get_db),
+    # 建号的人和授权的人都要能看到名单 —— 但只有各自那一半能动。
+    current_user: User = Depends(require_permission("manage_accounts", "manage_authz")),
+):
+    """List all users. Held by 系统管理员（账号）and 安全管理员（授权）."""
+    rows = db.query(User).order_by(User.created_at.desc()).all()
+    return Response(data=[_user_row(u) for u in rows])
 
 
 @router.post("/users", response_model=Response)
 async def create_user(
     request: UserCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(require_permission("manage_accounts")),
 ):
-    """Create a new user (admin only)"""
+    """Create a user (系统管理员). The role here is 初始任命 —— 后续变更归授权。"""
     try:
         validate_password_strength(request.password)
     except ValueError as exc:
         return Response(code=400, msg=str(exc))
-    
+
     if db.query(User).filter(User.username == request.username).first():
         return Response(code=409, msg="用户名已存在")
-    
+
     if request.role not in VALID_ROLES:
         return Response(code=400, msg=f"角色必须是 {'/'.join(VALID_ROLES)} 之一")
 
@@ -103,12 +154,12 @@ async def create_user(
         password_hash=get_password_hash(request.password),
         nickname=request.nickname or request.username,
         role=request.role,
-        is_active=request.is_active
+        is_active=request.is_active,
     )
-    
+
     db.add(user)
     db.commit()
-    
+
     return Response(msg="用户创建成功")
 
 
@@ -117,61 +168,194 @@ async def update_user(
     user_id: int,
     request: UserUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(require_permission("manage_accounts")),
 ):
-    """Update user (admin only)"""
+    """Update account profile (系统管理员). 角色不在这里改 —— 见 /users/{id}/role。"""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return Response(code=404, msg="用户不存在")
-    
+
     if request.nickname is not None:
         user.nickname = request.nickname
-    if request.role is not None:
-        if request.role not in VALID_ROLES:
-            return Response(code=400, msg=f"角色必须是 {'/'.join(VALID_ROLES)} 之一")
-        user.role = request.role
+
     if request.is_active is not None:
+        if request.is_active is False:
+            try:
+                assert_can_modify_account(current_user, user, action="disable")
+            except HTTPException as exc:
+                return Response(code=400, msg=str(exc.detail))
+            if is_last_active_sys_admin(user, _count_other_active_sys_admins(db, user.id)):
+                return Response(code=400, msg="不能禁用最后一个在任系统管理员，否则没人能再建号")
         user.is_active = request.is_active
+
     if request.password:
         try:
             validate_password_strength(request.password)
         except ValueError as exc:
             return Response(code=400, msg=str(exc))
         user.password_hash = get_password_hash(request.password)
-    
+
     db.commit()
     return Response(msg="更新成功")
+
+
+@router.put("/users/{user_id}/role", response_model=Response)
+async def update_user_role(
+    user_id: int,
+    request: UserRoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("manage_authz")),
+):
+    """Change a user's role (安全管理员 only). 这就是「授权」那把钥匙。"""
+    if request.role not in VALID_ROLES:
+        return Response(code=400, msg=f"角色必须是 {'/'.join(VALID_ROLES)} 之一")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return Response(code=404, msg="用户不存在")
+
+    try:
+        assert_can_modify_account(current_user, user, action="role-change")
+    except HTTPException as exc:
+        return Response(code=400, msg=str(exc.detail))
+
+    new_role = request.role
+    # 降掉一个在任系统管理员之前，先确认还有别人能建号。
+    if normalize_role(user.role) == "sys_admin" and new_role != "sys_admin":
+        if is_last_active_sys_admin(user, _count_other_active_sys_admins(db, user.id)):
+            return Response(code=400, msg="不能把最后一个在任系统管理员改成其他角色，否则没人能再建号")
+
+    old_role = user.role
+    user.role = new_role
+    db.commit()
+    return Response(
+        msg=f"已将「{user.username}」的角色从 {ROLE_LABELS.get(normalize_role(old_role), old_role)} "
+            f"改为 {ROLE_LABELS.get(new_role, new_role)}",
+        data={"user_id": user.id, "old_role": old_role, "role": new_role},
+    )
 
 
 @router.delete("/users/{user_id}", response_model=Response)
 async def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(require_permission("manage_accounts")),
 ):
-    """Delete user (admin only)"""
-    if user_id == current_user.id:
-        return Response(code=400, msg="不能删除自己")
-    
+    """Delete user (系统管理员)."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return Response(code=404, msg="用户不存在")
-    
+
+    try:
+        assert_can_modify_account(current_user, user, action="delete")
+    except HTTPException as exc:
+        return Response(code=400, msg=str(exc.detail))
+
+    if is_last_active_sys_admin(user, _count_other_active_sys_admins(db, user.id)):
+        return Response(code=400, msg="不能删除最后一个在任系统管理员，否则没人能再建号")
+
     db.delete(user)
     db.commit()
-    
+
     return Response(msg="删除成功")
+
+
+@router.get("/permissions", response_model=Response[dict])
+async def get_permission_matrix(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """三权分立矩阵 + 当前用户的权限点。任意登录用户可看 —— 这不是秘密，
+    正是让人看懂「谁能干什么」的界面。矩阵存在 ``role_permissions`` 表里，
+    系统管理员可在界面上勾选分配。"""
+    ensure_role_permissions(db)
+    return Response(data={
+        "permissions": list(PERMISSIONS),
+        "separation_of_powers": list(SEPARATION_OF_POWERS),
+        "roles": list(permission_matrix(db)),
+        "role_labels": ROLE_LABELS,
+        "role_descriptions": ROLE_DESCRIPTIONS,
+        # 「恢复默认」按钮的权威来源，不是前端那份副本
+        "defaults": {r: sorted(ps) for r, ps in ROLE_PERMISSIONS.items()},
+        "my_role": normalize_role(current_user.role),
+        "my_permissions": sorted(permissions_for(current_user.role, db)),
+        # 能不能进编辑态（勾选分配）。系统管理员走 manage_accounts 这把钥匙
+        "can_assign": has_permission(current_user, *CAN_ASSIGN_MATRIX, db=db),
+    })
+
+
+class RolePermissionsUpdate(BaseModel):
+    """整张「角色 → 权限」矩阵。**一次提交整张表** —— 三权独占是跨角色的约束，
+    一次改一个角色没法校验「这把钥匙是不是已经配给别人了」。"""
+    roles: Dict[str, List[str]]
+
+
+@router.put("/permissions", response_model=Response)
+async def save_permission_matrix(
+    request: RolePermissionsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission(*CAN_ASSIGN_MATRIX)),
+):
+    """勾选分配角色权限矩阵（系统管理员 / 安全管理员）。
+
+    三条底线由 ``validate_role_matrix`` 硬校验，勾也踩不过去：
+    一个角色不能同时握两项三权；每项三权只认一个在任者；每项三权必须有人接。
+    ``manage_system`` / ``operate`` 随意勾。
+    """
+    try:
+        save_role_permissions(db, request.roles, updated_by=current_user.username)
+    except ValueError as exc:
+        return Response(code=400, msg=str(exc))
+    return Response(
+        msg="权限矩阵已更新",
+        data={"roles": list(permission_matrix(db))},
+    )
 
 
 # === System Configuration ===
 
+# 界面外观默认值。启动种子 + SQL 迁移都会建这些 key，这里再兜一层：SEED 关掉
+# 且迁移没跑的库也能存外观配置 —— 界面管理页不该因为「key 不存在」而废掉。
+# 只允许 ui_ 前缀的 key 走这条自动补建，其余未知 key 仍然照旧硬拒。
+UI_CONFIG_DEFAULTS = {
+    "ui_theme": ("light", "主题模式", "light 或 dark"),
+    "ui_primary_color": ("#409eff", "主色", "Element Plus 主色（十六进制）"),
+    "ui_density": ("default", "表格密度", "default / small / large"),
+    "ui_sidebar_collapse": ("false", "侧边栏默认折叠", "true 或 false"),
+    "ui_site_title": ("安全巡检平台", "站点标题", "侧边栏左上角显示的名称"),
+}
+
+
+def _ensure_ui_config(db: Session) -> dict:
+    """补齐缺失的 ui_* 配置项，返回 key → SystemConfig 行。幂等。"""
+    existing = {r.key: r for r in db.query(SystemConfig).filter(SystemConfig.key.like("ui_%")).all()}
+    added = False
+    for key, (val, label, desc) in UI_CONFIG_DEFAULTS.items():
+        if key in existing:
+            continue
+        row = SystemConfig(key=key, value=val, label=label, description=desc, group_name="ui")
+        db.add(row)
+        existing[key] = row
+        added = True
+    if added:
+        db.commit()
+    return existing
+
+
 @router.get("/config", response_model=Response[Dict[str, List[dict]]])
 async def get_config(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Get all system config (grouped). Secret values are never returned."""
+    """Get all system config (grouped). Secret values are never returned.
+
+    运行态键（scheduler_*）和 runtime 分组在这里被滤掉 —— 它们不是配置，
+    见 ``_is_runtime_key``。
+    """
+    _ensure_ui_config(db)
     rows = db.query(SystemConfig).order_by(SystemConfig.group_name, SystemConfig.id).all()
 
     groups = {}
     for r in rows:
+        if _is_runtime_key(r.key) or (r.group_name or "") == "runtime":
+            continue
         groups.setdefault(r.group_name, []).append(_mask_config_row(r))
 
     return Response(data=groups)
@@ -185,9 +369,9 @@ class ConfigUpdateRequest(BaseModel):
 async def save_config(
     request: ConfigUpdateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(require_permission("manage_system"))
 ):
-    """Save system config (admin only).
+    """Save system config (系统管理员).
 
     Secret keys are write-only: sending "" keeps the existing value (the form
     never has the real value back — see ``_mask_config_row``).
@@ -195,7 +379,9 @@ async def save_config(
     so an admin could tighten ``login_max_attempts`` and get "保存成功" while
     ``saved=0`` and the runtime kept the env default — a silent policy failure.
     """
-    rows = {r.key: r for r in db.query(SystemConfig).all()}
+    _ensure_ui_config(db)
+    rows = {r.key: r for r in db.query(SystemConfig).all()
+            if not _is_runtime_key(r.key) and (r.group_name or "") != "runtime"}
     unknown = [k for k in request.updates if k not in rows]
     if unknown:
         return Response(
@@ -508,7 +694,8 @@ async def login_logs(
     page_size: int = 20,
     status: str = "",
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
+    # 审计日志独占 —— 系统管理员建号、安全管理员授权，但都看不到谁登录过。
+    current_user: User = Depends(require_permission("audit"))
 ):
     """Get login logs（兼容接口，内部改为查询日志中心 OperationLog 表 log_type='login'）"""
     from app.models.operation_log import OperationLog

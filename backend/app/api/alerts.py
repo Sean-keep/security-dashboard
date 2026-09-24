@@ -18,7 +18,8 @@ from app.models.alert import Alert
 from app.models.user import User
 from app.schemas.alert import AlertResponse, AlertUpdate
 from app.schemas.common import Response, PaginatedResponse, PaginatedData
-from app.api.security import get_current_user, require_roles
+from app.api.security import get_current_user
+from app.core.permissions import require_permission
 
 class BatchIdsRequest(BaseModel):
     """Batch IDs request body"""
@@ -256,7 +257,7 @@ async def update_alert(
     alert_id: int,
     request: AlertUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Update alert status"""
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
@@ -285,7 +286,7 @@ async def update_alert(
 async def batch_update(
     request: BatchUpdateRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Batch update alert status"""
     ids = request.ids
@@ -304,7 +305,7 @@ async def batch_update(
 async def batch_delete(
     request: BatchIdsRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Batch delete alerts"""
     ids = request.ids
@@ -321,7 +322,7 @@ async def batch_delete(
 async def delete_alert(
     alert_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Delete a single alert"""
     alert = db.query(Alert).filter(Alert.id == alert_id).first()

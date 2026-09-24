@@ -36,7 +36,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.security import get_current_admin_user, get_current_user, require_roles
+from app.api.security import get_current_user
+from app.core.permissions import require_permission
 from app.core.config import settings
 from app.models.base import get_db
 from app.models.config import SystemConfig
@@ -458,7 +459,7 @@ class CustomMetricUpdate(BaseModel):
 @router.get("/scripts", response_model=Response[List[dict]])
 def list_scripts(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator")),
+    current_user: User = Depends(require_permission("operate")),
 ):
     rows = db.query(Script).order_by(Script.id.desc()).all()
     return Response(data=[{
@@ -473,7 +474,7 @@ def list_scripts(
 def create_script(
     req: ScriptCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     _require_script_execution_enabled()
     if _check_script_safety(req.content, req.script_type):
@@ -493,7 +494,7 @@ def update_script(
     script_id: int,
     req: ScriptUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     _require_script_execution_enabled()
     s = db.query(Script).filter(Script.id == script_id).first()
@@ -515,7 +516,7 @@ def update_script(
 def delete_script(
     script_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     s = db.query(Script).filter(Script.id == script_id).first()
     if not s:
@@ -529,7 +530,7 @@ def delete_script(
 def execute_scripts(
     req: ScriptExecRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("operate")),
 ):
     _require_script_execution_enabled()
     scripts = db.query(Script).filter(
@@ -553,7 +554,7 @@ def execute_scripts(
 def execute_block(
     req: BlockExecRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("operate")),
 ):
     _require_script_execution_enabled()
     script = db.query(Script).filter(
@@ -581,7 +582,7 @@ def execute_block(
 def execute_adhoc(
     req: AdhocExecRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     _require_script_execution_enabled()
     started = local_now()
@@ -601,7 +602,7 @@ def list_script_runs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     """审计：某个脚本的历史执行记录（谁跑的、哪一版、结果、耗时）。"""
     from app.models.script_run import ScriptRunLog
@@ -1054,7 +1055,7 @@ _PKG_RE = re.compile(r"^[a-zA-Z0-9._=\-\^~\[\]]+$")
 
 
 @router.get("/pip-packages", response_model=Response[List[dict]])
-def list_pip_packages(current_user: User = Depends(get_current_admin_user)):
+def list_pip_packages(current_user: User = Depends(require_permission("manage_system"))):
     """List installed Python packages (``pip list``)."""
     try:
         result = subprocess.run(
@@ -1071,7 +1072,7 @@ def list_pip_packages(current_user: User = Depends(get_current_admin_user)):
 @router.post("/pip-install", response_model=Response)
 def pip_install(
     req: PipInstallReq,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     """Install a Python package (admin only)."""
     _require_script_execution_enabled()
@@ -1102,7 +1103,7 @@ def pip_install(
 @router.post("/pip-uninstall", response_model=Response)
 def pip_uninstall(
     req: PipUninstallReq,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     """Uninstall a Python package (admin only)."""
     _require_script_execution_enabled()
@@ -1152,7 +1153,7 @@ def list_custom_metrics(
 def create_custom_metric(
     req: CustomMetricCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     if db.query(CustomMetric).filter(CustomMetric.name == req.name).first():
         return Response(code=409, msg=f"指标名称「{req.name}」已存在")
@@ -1169,7 +1170,7 @@ def update_custom_metric(
     metric_id: int,
     req: CustomMetricUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     metric = db.query(CustomMetric).filter(CustomMetric.id == metric_id).first()
     if not metric:
@@ -1194,7 +1195,7 @@ def update_custom_metric(
 def delete_custom_metric(
     metric_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     metric = db.query(CustomMetric).filter(CustomMetric.id == metric_id).first()
     if not metric:
@@ -1227,7 +1228,7 @@ def get_server_aliases(
 def set_server_aliases(
     req: Dict[str, str],
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_permission("manage_system")),
 ):
     row = db.query(SystemConfig).filter(SystemConfig.key == "server_aliases").first()
     if not row:

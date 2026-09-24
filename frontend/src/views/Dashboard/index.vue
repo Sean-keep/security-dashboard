@@ -267,7 +267,7 @@ onUnmounted(() => {
   gap: 16px;
   box-shadow: 0 2px 12px rgba(0,0,0,0.06);
   border-left: 4px solid;
-  &.stat-primary { border-color: var(--el-color-primary); .stat-icon { background: var(--el-color-primary-light-3); color: var(--el-color-primary); } }
+  &.stat-primary { border-color: var(--el-color-primary); .stat-icon { background: var(--el-color-primary-light-9); color: var(--el-color-primary); } }
   &.stat-success { border-color: var(--el-color-success); .stat-icon { background: var(--el-color-success-light-9); color: var(--el-color-success); } }
   &.stat-danger { border-color: var(--el-color-danger); .stat-icon { background: var(--el-color-danger-light-9); color: var(--el-color-danger); } }
   &.stat-warning { border-color: var(--el-color-warning); .stat-icon { background: var(--el-color-warning-light-9); color: var(--el-color-warning); } }

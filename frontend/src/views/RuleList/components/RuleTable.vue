@@ -43,7 +43,25 @@
         </el-tooltip>
       </template>
     </el-table-column>
-    <el-table-column prop="last_run" label="上次执行" width="180" show-overflow-tooltip />
+    <el-table-column prop="last_run" label="上次执行" width="180" show-overflow-tooltip>
+      <template #default="{ row }">
+        <div class="run-cell">
+          <span>{{ row.last_run || '—' }}</span>
+          <el-tag
+            v-if="row.last_status"
+            :type="row.last_status === 'success' ? 'success' : row.last_status === 'missed' ? 'warning' : 'danger'"
+            size="small"
+            effect="plain"
+          >{{ statusLabel(row.last_status) }}</el-tag>
+        </div>
+      </template>
+    </el-table-column>
+    <el-table-column prop="next_run" label="下次执行" width="180" show-overflow-tooltip>
+      <template #default="{ row }">
+        <span v-if="row.schedule_type === 'once'" class="muted">手动</span>
+        <span v-else>{{ row.next_run || '—' }}</span>
+      </template>
+    </el-table-column>
     <el-table-column prop="is_enabled" label="状态" width="80" align="center">
       <template #default="{ row }">
         <el-switch v-model="row.is_enabled" size="small" @change="emit('toggle', row)" />
@@ -83,6 +101,7 @@ defineProps({
 const emit = defineEmits(['edit', 'preview', 'execute', 'log', 'delete', 'toggle', 'load'])
 
 const scheduleLabel = (s) => ({ once: '手动', interval: '周期', cron: 'Cron' }[s] || s)
+const statusLabel = (s) => ({ success: '成功', error: '失败', missed: '漏跑' }[s] || s)
 
 // 计算趋势图路径
 const getTrendPath = (trend) => {
@@ -111,6 +130,8 @@ const getTrendArea = (trend) => {
 
 <style lang="scss" scoped>
 .rule-name { font-weight: 600; color: var(--el-color-primary); }
+.run-cell { display:flex; align-items:center; gap:6px; }
+.muted { color: var(--el-text-color-secondary); }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; }
 
 .trend-chart {

@@ -53,7 +53,7 @@
               <span class="node-addr" :class="{'has-alias': s.alias}">{{ s.instance }}</span>
             </div>
             <el-button
-              v-if="isAdmin"
+              v-if="canEditAlias"
               type="primary"
               link
               size="small"
@@ -144,7 +144,8 @@ import { Monitor } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 
 const userStore = useUserStore()
-const isAdmin = computed(() => userStore.isAdmin)
+// 别名写在 system_config 里，属 manage_system（系统管理员），不是泛指的「管理员」
+const canEditAlias = computed(() => userStore.hasPerm('manage_system'))
 
 
 const loading = ref(false)

@@ -1,6 +1,13 @@
 <template>
-  <!-- ══ 登录日志 ══ -->
-  <el-card shadow="never" class="mb-16">
+  <!-- ══ 登录日志 ══
+       审计是三权里独占的一项：登录/操作日志只给审计管理员看。
+       系统管理员建号、安全管理员授权，但都看不到谁登录过 —— 那正是分权的意义。 -->
+  <el-alert v-if="!canAudit" type="info" :closable="false" class="mb-16">
+    审计日志是<b>审计管理员</b>独占的。当前角色（{{ userStore.roleName }}）看不到 ——
+    建号的不看审计，授权的也不看。
+  </el-alert>
+
+  <el-card v-else shadow="never" class="mb-16">
     <template #header>
       <div class="card-header">
         <span class="card-title">日志中心</span>
@@ -48,8 +55,11 @@
 </template>
 
 <script setup>
+import { computed, onMounted } from 'vue'
 import { useSystemSettings } from '../composables/useSystemSettings'
+import { useUserStore } from '@/store/user'
 
+const userStore = useUserStore()
 const {
   logList,
   logTotal,
@@ -57,6 +67,9 @@ const {
   logTypeFilter,
   loadLogs
 } = useSystemSettings()
+
+const canAudit = computed(() => userStore.hasPerm('audit'))
+onMounted(() => { if (canAudit.value) loadLogs() })
 </script>
 
 <style lang="scss" scoped>

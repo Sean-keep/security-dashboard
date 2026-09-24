@@ -9,7 +9,23 @@
       <el-table-column prop="alert_count" label="告警数" width="80" align="center" />
       <el-table-column prop="status" label="状态" width="80" align="center">
         <template #default="{ row }">
-          <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">{{ row.status === 'success' ? '成功' : '失败' }}</el-tag>
+          <el-tag
+            :type="row.status === 'success' ? 'success' : row.status === 'missed' ? 'warning' : 'danger'"
+            size="small"
+          >{{ row.status === 'success' ? '成功' : row.status === 'missed' ? '漏跑' : '失败' }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="duration_ms" label="耗时" width="90" align="right">
+        <template #default="{ row }">
+          <span v-if="row.duration_ms">{{ (row.duration_ms / 1000).toFixed(2) }}s</span>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="triggered_by" label="触发" width="80" align="center">
+        <template #default="{ row }">
+          <el-tag size="small" effect="plain" :type="row.triggered_by === 'manual' ? 'info' : 'primary'">
+            {{ row.triggered_by === 'manual' ? '手动' : '定时' }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="detail" label="执行摘要" min-width="300" show-overflow-tooltip />

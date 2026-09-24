@@ -22,6 +22,7 @@ from .script import Script
 from .script_run import ScriptRunLog
 from .custom_metric import CustomMetric
 from .inspection_report import InspectionReport
+from .role_permission import RolePermission
 
 __all__ = [
     "Base", "engine", "SessionLocal", "get_db",
@@ -30,6 +31,7 @@ __all__ = [
     "Rule",
     "Alert",
     "SystemConfig",
+    "RolePermission",
     "RuleExecutionLog",
     "OperationLog",
     "IngestEndpoint",

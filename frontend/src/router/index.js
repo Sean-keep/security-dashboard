@@ -12,9 +12,12 @@ const routes = [
       { path: 'addresses', name: 'AddressList', component: () => import('@/views/AddressList/index.vue') },
       { path: 'alerts', name: 'AlertList', component: () => import('@/views/AlertList/index.vue') },
       { path: 'rules', name: 'RuleList', component: () => import('@/views/RuleList/index.vue') },
+      { path: 'scheduler', name: 'SchedulerCenter', component: () => import('@/views/SchedulerCenter/index.vue') },
       { path: 'raw-logs', name: 'RawLogQuery', component: () => import('@/views/RawLogQuery/index.vue') },
       { path: 'settings', redirect: '/settings/users' },
       { path: 'settings/users', name: 'SettingsUsers', component: () => import('@/views/SystemSettings/index.vue') },
+      { path: 'settings/permissions', name: 'SettingsPermissions', component: () => import('@/views/SystemSettings/index.vue') },
+      { path: 'settings/ui', name: 'SettingsUi', component: () => import('@/views/SystemSettings/index.vue') },
       { path: 'settings/connection', name: 'SettingsConnection', component: () => import('@/views/SystemSettings/index.vue') },
       { path: 'settings/security', name: 'SettingsSecurity', component: () => import('@/views/SystemSettings/index.vue') },
       { path: 'settings/logs', name: 'SettingsLogs', component: () => import('@/views/SystemSettings/index.vue') },
@@ -33,7 +36,14 @@ const router = createRouter({
 })
 
 // 旧路由兼容：?tab= 参数 → 新路径
-const SETTINGS_TAB_MAP = { users: 'users', connection: 'connection', security: 'security', logs: 'logs' }
+const SETTINGS_TAB_MAP = {
+  users: 'users',
+  permissions: 'permissions',
+  ui: 'ui',
+  connection: 'connection',
+  security: 'security',
+  logs: 'logs',
+}
 const INSPECTION_TAB_MAP = { scripts: 'scripts', traffic: 'report', metrics: 'metrics' }
 
 router.beforeEach((to, from, next) => {

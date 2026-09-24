@@ -35,6 +35,23 @@
         <el-input v-model="ruleForm.schedule_value" placeholder="如: 0 9 * * * (每天9点)" style="width:300px" size="default" />
         <span style="margin-left:8px;color:var(--el-text-color-secondary);font-size:12px">分 时 日 月 周</span>
       </el-form-item>
+      <!-- 调度预览：和保存校验走同一条后端路径，边打字边回显 -->
+      <el-form-item v-if="ruleForm.schedule_type !== 'once'" label="排期预览" label-width="100">
+        <div class="schedule-preview" :class="previewClass">
+          <template v-if="previewLoading">计算中…</template>
+          <template v-else-if="preview.error">
+            <span class="preview-error">✕ {{ preview.error }}</span>
+          </template>
+          <template v-else-if="preview.next_runs?.length">
+            <div class="preview-ok">✓ 合法，下次执行：</div>
+            <div v-for="(t, i) in preview.next_runs" :key="i" class="preview-run">{{ i + 1 }}. {{ t }}</div>
+          </template>
+          <template v-else>填写调度参数后显示下次执行时间</template>
+        </div>
+      </el-form-item>
+      <el-form-item v-else label="排期预览" label-width="100">
+        <div class="schedule-preview">手动执行，保存后需要点「执行」才会跑</div>
+      </el-form-item>
 
       <el-form-item label="规则描述">
         <el-input v-model="ruleForm.description" type="textarea" :rows="2" placeholder="描述此规则的检测逻辑和目的" />
@@ -195,12 +212,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import StageCard from './StageCard.vue'
 import { useRules } from '../composables/useRules'
-import { rules as rulesApi } from '@/api'
+import { rules as rulesApi, schedulePreview } from '@/api'
 
 const emit = defineEmits(['saved'])
 
@@ -253,6 +270,60 @@ const ruleFormRules = {
 }
 
 const dialogTitle = computed(() => isEdit.value ? '编辑规则' : '新建规则')
+
+// ── 调度参数实时预览 ──
+// 和保存校验走同一条后端路径（rule_runner.parse_schedule），避免「打字时说合法、
+// 存进去却不合法」。debounce 是为了别在每个键上打一次接口。
+const preview = ref({ valid: true, error: null, next_runs: [] })
+const previewLoading = ref(false)
+let previewTimer = null
+
+const currentScheduleValue = computed(() => {
+  if (ruleForm.value.schedule_type === 'interval') {
+    return `${scheduleValueObj.value} ${scheduleValueObj.unit}`
+  }
+  return ruleForm.value.schedule_value || ''
+})
+
+const previewClass = computed(() => ({
+  'is-error': !!preview.value.error,
+  'is-ok': preview.value.valid && preview.value.next_runs?.length
+}))
+
+const refreshPreview = async () => {
+  const stype = ruleForm.value.schedule_type
+  const svalue = currentScheduleValue.value
+  if (stype === 'once') {
+    preview.value = { valid: true, error: null, next_runs: [] }
+    return
+  }
+  if (!svalue || !svalue.trim()) {
+    preview.value = { valid: false, error: '执行周期不能为空', next_runs: [] }
+    return
+  }
+  previewLoading.value = true
+  try {
+    const res = await schedulePreview(stype, svalue, 3)
+    preview.value = res.data || { valid: false, error: '预览失败', next_runs: [] }
+  } catch (e) {
+    preview.value = { valid: false, error: e.message || '预览失败', next_runs: [] }
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+watch(
+  [
+    () => ruleForm.value.schedule_type,
+    () => ruleForm.value.schedule_value,
+    () => scheduleValueObj.value,
+    () => scheduleValueObj.unit,
+  ],
+  () => {
+    clearTimeout(previewTimer)
+    previewTimer = setTimeout(refreshPreview, 350)
+  }
+)
 
 // 添加阶段
 const addStage = () => {
@@ -353,6 +424,7 @@ const openCreate = async () => {
   ruleForm.value.es_index = defaultIndex
 
   dialogVisible.value = true
+  refreshPreview()
 }
 
 // 打开编辑
@@ -440,6 +512,7 @@ const openEdit = async (row) => {
       if (stage.index) await loadIndexFields(stage.index)
     }
     dialogVisible.value = true
+    refreshPreview()
   } catch (e) {}
 }
 
@@ -487,6 +560,18 @@ const submitRule = async () => {
     let scheduleValue = ruleForm.value.schedule_value
     if (ruleForm.value.schedule_type === 'interval') {
       scheduleValue = `${scheduleValueObj.value} ${scheduleValueObj.unit}`
+    }
+
+    // 提交前再校验一次。预览那条路是实时的，但用户可能在红字的情况下硬存 ——
+    // 后端也会拒（400），这里先拦一层给个更早的反馈。
+    if (ruleForm.value.schedule_type !== 'once') {
+      const pv = await schedulePreview(ruleForm.value.schedule_type, scheduleValue, 1).catch(() => null)
+      const d = pv?.data
+      if (d && d.valid === false) {
+        ElMessage.error(d.error || '调度参数不合法')
+        saveLoading.value = false
+        return
+      }
     }
 
     const payload = {
@@ -597,5 +682,19 @@ defineExpose({ openCreate, openEdit })
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
+}
+
+.schedule-preview {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--el-text-color-secondary);
+
+  &.is-error { color: var(--el-color-danger); }
+  .preview-ok { color: var(--el-color-success); }
+  .preview-error { color: var(--el-color-danger); }
+  .preview-run {
+    font-family: var(--el-font-family-mono, monospace);
+    color: var(--el-text-color-regular);
+  }
 }
 </style>

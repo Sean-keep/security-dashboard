@@ -48,6 +48,8 @@ def db_session(engine):
 
 @pytest.fixture()
 def admin_user(db_session):
+    """系统管理员。名字里带 admin 是历史包袱 —— 老测试都按这个名取，
+    角色本身已经是三权分立里的 sys_admin，不是旧的一把抓 admin。"""
     from app.api.security import get_password_hash
     from app.models.user import User
 
@@ -55,7 +57,45 @@ def admin_user(db_session):
         username="admin",
         password_hash=get_password_hash("AdminPass1"),
         nickname="Admin",
-        role="admin",
+        role="sys_admin",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture()
+def sec_admin_user(db_session):
+    """安全管理员 —— 持「授权」那把钥匙。"""
+    from app.api.security import get_password_hash
+    from app.models.user import User
+
+    user = User(
+        username="sec",
+        password_hash=get_password_hash("SecPass1!"),
+        nickname="Sec",
+        role="sec_admin",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture()
+def audit_admin_user(db_session):
+    """审计管理员 —— 只看审计，其余什么钥匙都没有。"""
+    from app.api.security import get_password_hash
+    from app.models.user import User
+
+    user = User(
+        username="audit",
+        password_hash=get_password_hash("AuditPass1"),
+        nickname="Audit",
+        role="audit_admin",
         is_active=True,
     )
     db_session.add(user)

@@ -26,8 +26,10 @@ class ExecutionLogResponse(BaseModel):
     executed_at: Optional[str] = None
     alert_count: Optional[int] = 0
     detail: Optional[str] = ""
-    status: Optional[str] = "success"
+    status: Optional[str] = "success"   # success / error / missed
     error_message: Optional[str] = None
+    duration_ms: Optional[int] = 0
+    triggered_by: Optional[str] = "scheduler"  # scheduler / manual
 
     @field_validator("executed_at", mode="before")
     @classmethod
@@ -71,7 +73,7 @@ async def list_execution_logs(
     rows = db.execute(
         sa_text(f"""
             SELECT id, rule_id, rule_name, executed_at, alert_count,
-                   detail, status, error_message
+                   detail, status, error_message, duration_ms, triggered_by
             FROM rule_execution_logs
             WHERE {where_clause}
             ORDER BY id DESC
@@ -90,7 +92,9 @@ async def list_execution_logs(
             alert_count=r[4],
             detail=r[5],
             status=r[6],
-            error_message=r[7]
+            error_message=r[7],
+            duration_ms=r[8] or 0,
+            triggered_by=r[9] or "scheduler",
         ))
 
     return PaginatedResponse(
@@ -113,7 +117,7 @@ async def get_execution_log(
     row = db.execute(
         sa_text("""
             SELECT id, rule_id, rule_name, executed_at, alert_count,
-                   detail, status, error_message
+                   detail, status, error_message, duration_ms, triggered_by
             FROM rule_execution_logs WHERE id = :id
         """),
         {"id": log_id}
@@ -130,5 +134,7 @@ async def get_execution_log(
         alert_count=row[4],
         detail=row[5],
         status=row[6],
-        error_message=row[7]
+        error_message=row[7],
+        duration_ms=row[8] or 0,
+        triggered_by=row[9] or "scheduler",
     ))

@@ -29,7 +29,8 @@ from app.models.user import User
 from app.models.ingest_endpoint import IngestEndpoint
 from app.models.ingest_log import IngestLog
 from app.models.ingest_sender import IngestSender
-from app.api.security import get_current_admin_user, get_current_user
+from app.api.security import get_current_user
+from app.core.permissions import require_permission
 from app.schemas.common import Response
 from app.utils.timezone import local_now
 
@@ -155,7 +156,7 @@ def create_endpoint(
     body: EndpointCreate,
     db: Session = Depends(get_db),
     # 铸造数据源凭据 = 授权行为，不能只要「登录了」就能做
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system")),
 ):
     if db.query(IngestEndpoint).filter(IngestEndpoint.name == body.name).first():
         return Response(code=409, msg="接口名称已存在")
@@ -192,7 +193,7 @@ def rotate_token(
     endpoint_id: int,
     db: Session = Depends(get_db),
     # 轮换会让正当源立刻断供 —— 必须 admin
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system")),
 ):
     ep = db.query(IngestEndpoint).filter(IngestEndpoint.id == endpoint_id).first()
     if not ep:
@@ -207,7 +208,7 @@ def update_endpoint(
     endpoint_id: int,
     body: EndpointUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system")),
 ):
     ep = db.query(IngestEndpoint).filter(IngestEndpoint.id == endpoint_id).first()
     if not ep:
@@ -228,7 +229,7 @@ def update_endpoint(
 def delete_endpoint(
     endpoint_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system")),
 ):
     ep = db.query(IngestEndpoint).filter(IngestEndpoint.id == endpoint_id).first()
     if not ep:
@@ -245,7 +246,7 @@ def clear_logs(
     endpoint_id: int,
     db: Session = Depends(get_db),
     # 清日志是反取证动作
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system")),
 ):
     ep = db.query(IngestEndpoint).filter(IngestEndpoint.id == endpoint_id).first()
     if not ep:
@@ -259,7 +260,7 @@ def clear_logs(
 def delete_log(
     log_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system")),
 ):
     log = db.query(IngestLog).filter(IngestLog.id == log_id).first()
     if not log:
@@ -449,7 +450,7 @@ def bind_sender(
     sender_id: int,
     body: SenderBindRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system", "operate")),
 ):
     """认人：给这个发送方起个名字。"""
     s = db.query(IngestSender).filter(IngestSender.id == sender_id).first()
@@ -468,7 +469,7 @@ def bind_sender(
 def reject_sender(
     sender_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system", "operate")),
 ):
     """拒收：标成不要的。数据照存，日报照取接口最近一条。"""
     s = db.query(IngestSender).filter(IngestSender.id == sender_id).first()
@@ -484,7 +485,7 @@ def reject_sender(
 def unbind_sender(
     sender_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system", "operate")),
 ):
     """退回待绑定 —— 绑错了可以反悔。"""
     s = db.query(IngestSender).filter(IngestSender.id == sender_id).first()
@@ -501,7 +502,7 @@ def unbind_sender(
 def delete_sender(
     sender_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_admin_user),
+    user: User = Depends(require_permission("manage_system", "operate")),
 ):
     """删掉这个发送方的识别记录（它推过的数据保留，sender_id 置空）。"""
     s = db.query(IngestSender).filter(IngestSender.id == sender_id).first()

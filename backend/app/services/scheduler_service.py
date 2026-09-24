@@ -1,125 +1,210 @@
 """
-规则调度器服务 (v2)
-从原版 Flask 迁移：去除 Flask app context，改用 SQLAlchemy session + v2 es_service
+规则调度器服务
+
+架构：uvicorn（web）和 run_scheduler.py（调度器）是两个进程，APScheduler 的
+JobStore 又是内存型，所以两边够不着对方的 job。**不引 IPC**，改成定时对账 ——
+一个 tick 内收敛，进程崩了也能自愈。
+
+        rules.py 改规则  →  置 scheduler_dirty = 1（SystemConfig）
+        run_scheduler.py →  每 5 秒看一眼脏位，有就 reconcile
+                         →  每 60 秒兜底全量对账一次 + 写进程心跳
+
+对账时**不能**无脑重加 job：IntervalTrigger 一被 replace 就把起算点重置，每分钟
+reconcile 一次的话定时规则永远不会触发。所以 `_job_specs` 记着「调度参数指纹」，
+没变就不碰。
+
+业务逻辑不在这里 —— 跑规则统一走 `app.services.rule_runner.run_rule`。
 """
 import json
-from datetime import datetime, timedelta
 
 from app.utils.timezone import local_now
 
+from apscheduler.events import (
+    EVENT_JOB_MAX_INSTANCES,
+    EVENT_JOB_MISSED,
+    JobEvent,
+)
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from app.models.base import SessionLocal
 from app.models.rule import Rule
-from app.models.alert import Alert
 from app.models.config import SystemConfig
-from app.services.es_service import ESService, ESConfig
-from app.services.rule_executor import RuleExecutor
+from app.services import rule_runner
 
 
-def _get_es_config_from_db(db) -> ESConfig:
-    """从 SystemConfig 表读取 ES 配置（与 rules.py 的 _get_es_config 一致）"""
-    cfg_keys = ["es_host", "es_port", "es_scheme", "es_verify_certs", "es_user", "es_password", "es_index"]
-    cfg_values = {}
-    for key in cfg_keys:
-        cfg = db.query(SystemConfig).filter(SystemConfig.key == key).first()
-        cfg_values[key] = cfg.value if cfg else ""
-    return ESConfig(
-        host=cfg_values.get("es_host", "localhost"),
-        port=int(cfg_values.get("es_port", "9200") or "9200"),
-        scheme=cfg_values.get("es_scheme", "https"),
-        verify_certs=str(cfg_values.get("es_verify_certs", "false")).lower() == "true",
-        user=cfg_values.get("es_user", ""),
-        password=cfg_values.get("es_password", ""),
-        default_index=cfg_values.get("es_index", "security-logs-*")
-    )
+# 运行态键。不是配置，GET /settings/config 会把 runtime 分组过滤掉。
+HEARTBEAT_KEY = "scheduler_heartbeat"       # 进程主循环还活着
+LAST_ACTIVITY_KEY = "scheduler_last_activity"  # 最近一次真正跑完的任务
+DIRTY_KEY = "scheduler_dirty"               # 规则表被改过，调度器该对账了
 
-
-def _store_raw_logs_for_alerts(db, es, stages, alert_ids):
-    """给**指定**告警挂上 ES 原始日志。
-
-    早先签名是 ``(db, es, stages, rule_id)``，内部按「最近 1 分钟 + 同 src_ip」
-    猜哪些告警要挂 —— 一份 500 条的 ES JSON 会写进同 IP 的所有告警（包括几周前
-    那条已 resolved 的），既错又爆库。调用方现在直接把本轮新建的 alert id 递进来。
-    """
-    from app.models.alert import Alert
-    from datetime import timedelta
-
-    if not alert_ids:
-        return
-    try:
-        if not stages:
-            return
-        stage1 = stages[0]
-        index = stage1.get("index") or es.config.default_index
-        filters = stage1.get("filters", [])
-        time_window = stage1.get("time_window", {})
-
-        alerts = db.query(Alert).filter(Alert.id.in_(list(alert_ids))).all()
-        if not alerts:
-            return
-
-        # 每个 IP 查一次，结果只挂到**这个 IP 名下、本轮新建的**告警上
-        for alert in alerts:
-            ip = (alert.src_ip or "").strip()
-            if not ip or alert.raw_logs:
-                continue
-            try:
-                ip_filter = {"field": "src_ip", "operator": "equals", "value": ip}
-                query_filters = (list(filters) if isinstance(filters, list) else []) + [ip_filter]
-                raw_docs = es.execute_query(index, query_filters, time_window, limit=500)
-                if raw_docs:
-                    alert.raw_logs = json.dumps(raw_docs, ensure_ascii=False, default=str)
-            except Exception as e:
-                print(f"[Scheduler] Failed to fetch raw logs for alert {alert.id} ({ip}): {e}")
-
-        db.commit()
-    except Exception as e:
-        print(f"[Scheduler] Failed to store raw logs: {e}")
+# 心跳超过这个秒数就认为调度器停了。60 秒一轮写一次，留一倍余量。
+HEARTBEAT_STALE_SECONDS = 300
 
 
 class SchedulerService:
-    """调度器服务单例"""
+    """调度器服务单例（单进程使用；模块底部有全局实例）。"""
 
-    _instance = None
-    _scheduler = None
-    # job_id -> (schedule_type, schedule_value)，用来判断「调度参数变没变」。
-    # 对账时不能无脑重加 job：IntervalTrigger 一被 replace 就把起算点重置，
-    # 每分钟 reconcile 一次的话定时规则永远不会触发。
-    _job_specs: dict = {}
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._scheduler = BackgroundScheduler()
-        return cls._instance
+    def __init__(self):
+        self._scheduler = BackgroundScheduler()
+        # job_id -> (schedule_type, schedule_value)，用来判断「调度参数变没变」
+        self._job_specs: dict = {}
+        self._listen_events()
 
     @property
     def scheduler(self):
         return self._scheduler
 
+    # ── 生命周期 ──────────────────────────────────────────────────
     def start(self):
-        """启动调度器"""
         if not self._scheduler.running:
             self._scheduler.start()
             self.write_heartbeat()
             self._add_retention_job()
             print(f"[Scheduler] Started at {local_now()}")
 
+    def stop(self):
+        if self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+            print(f"[Scheduler] Stopped at {local_now()}")
+
+    # ── 心跳 / 脏标记 ────────────────────────────────────────────
+    @staticmethod
+    def _stamp(key: str) -> None:
+        db = SessionLocal()
+        try:
+            row = db.query(SystemConfig).filter(SystemConfig.key == key).first()
+            stamp = local_now().isoformat(timespec="seconds")
+            if row is None:
+                # group_name=runtime —— 别出现在系统设置页上
+                db.add(SystemConfig(key=key, value=stamp, label=key,
+                                    description="调度器运行态", group_name="runtime"))
+            else:
+                row.value = stamp
+                row.updated_at = local_now()
+            db.commit()
+        except Exception as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            print(f"[Scheduler] Failed to stamp {key}: {exc}")
+        finally:
+            db.close()
+
+    @classmethod
+    def write_heartbeat(cls) -> None:
+        """进程级心跳：主循环还在转。**不代表任务在跑** —— 线程池卡死也照写不误，
+        所以还要有 `write_activity()` 那条「最近一次真正跑完」。"""
+        cls._stamp(HEARTBEAT_KEY)
+
+    @classmethod
+    def write_activity(cls) -> None:
+        """任务级心跳：最近一次真正跑完（成功或失败都算）的任务。"""
+        cls._stamp(LAST_ACTIVITY_KEY)
+
+    @staticmethod
+    def mark_dirty() -> None:
+        """规则表被改动了。web 进程调这个，调度器下一个 tick（≤5 秒）就对账。
+
+        没有 IPC 也能把「新建规则要等最多一分钟才生效」压到秒级。
+        """
+        db = SessionLocal()
+        try:
+            row = db.query(SystemConfig).filter(SystemConfig.key == DIRTY_KEY).first()
+            if row is None:
+                db.add(SystemConfig(key=DIRTY_KEY, value="1", label=DIRTY_KEY,
+                                    description="调度器运行态", group_name="runtime"))
+            else:
+                row.value = "1"
+                row.updated_at = local_now()
+            db.commit()
+        except Exception as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            print(f"[Scheduler] Failed to mark dirty: {exc}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def consume_dirty() -> bool:
+        """读并清掉脏位。返回「刚才有没有人改过规则表」。"""
+        db = SessionLocal()
+        try:
+            row = db.query(SystemConfig).filter(SystemConfig.key == DIRTY_KEY).first()
+            if row is None or (row.value or "") != "1":
+                return False
+            row.value = "0"
+            row.updated_at = local_now()
+            db.commit()
+            return True
+        except Exception as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            print(f"[Scheduler] Failed to consume dirty flag: {exc}")
+            return False
+        finally:
+            db.close()
+
+    # ── 漏跑监听 ─────────────────────────────────────────────────
+    def _listen_events(self) -> None:
+        """APScheduler 的漏跑/丢弃事件落到执行日志里。
+
+        `misfire_grace_time` 一过这一轮被整个吞掉、`max_instances=1` 把并发触发
+        直接丢弃 —— 这两件事以前一点痕迹都不留，于是「灯是绿的但一条没跑」能一直
+        糊弄下去。落了 `status='missed'` 之后界面上就露馅了。
+        """
+
+        def _on_missed(event: JobEvent) -> None:
+            self._record_skip(event, reason=f"错过触发窗口（misfire_grace_time） job_id={event.job_id}")
+
+        def _on_max_instances(event: JobEvent) -> None:
+            self._record_skip(event, reason=f"上一轮还没跑完，本轮被丢弃（max_instances=1） job_id={event.job_id}")
+
+        self._scheduler.add_listener(_on_missed, EVENT_JOB_MISSED)
+        self._scheduler.add_listener(_on_max_instances, EVENT_JOB_MAX_INSTANCES)
+
+    @staticmethod
+    def _record_skip(event: JobEvent, *, reason: str) -> None:
+        job_id = str(getattr(event, "job_id", "") or "")
+        if not job_id.startswith("rule_"):
+            return
+        try:
+            rid = int(job_id.split("_", 1)[1])
+        except (ValueError, IndexError):
+            return
+        name = ""
+        try:
+            db = SessionLocal()
+            try:
+                rule = db.query(Rule).filter(Rule.id == rid).first()
+                name = rule.name if rule else ""
+            finally:
+                db.close()
+        except Exception:
+            pass
+        print(f"[Scheduler] MISSED rule_{rid} ({name}): {reason}")
+        rule_runner.record_missed_run(rid, rule_name=name, reason=reason)
+
+    # ── 内置任务 ─────────────────────────────────────────────────
     def _add_retention_job(self):
         """每天 03:17 清一次旧日志。
 
         刻意避开整点 —— 整点是备份/巡检脚本的默认档期，抢同一个 MySQL 连接池
         会互相拖慢。replace_existing + 独立 job_id，reconcile 不会碰它。
         """
+
         def _run_retention():
             try:
                 from app.services.retention import run_retention
                 deleted = run_retention()
                 if deleted:
                     print(f"[Scheduler] Retention pruned: {deleted}")
+                SchedulerService.write_activity()
             except Exception as exc:
                 print(f"[Scheduler] Retention failed: {exc}")
 
@@ -137,179 +222,45 @@ class SchedulerService:
         except Exception as exc:
             print(f"[Scheduler] Failed to register retention job: {exc}")
 
-    def stop(self):
-        """停止调度器"""
-        if self._scheduler.running:
-            self._scheduler.shutdown()
-            print(f"[Scheduler] Stopped at {local_now()}")
-
-    @staticmethod
-    def write_heartbeat() -> None:
-        """Stamp ``scheduler_heartbeat`` in SystemConfig.
-
-        ``/api/scheduler/status`` reads this instead of shelling out to
-        ``pgrep`` (which leaked process info to callers and N+1'd the DB).
-        A heartbeat older than 5 minutes means the scheduler is down.
-        """
-        db = SessionLocal()
-        try:
-            row = db.query(SystemConfig).filter(SystemConfig.key == "scheduler_heartbeat").first()
-            stamp = local_now().isoformat(timespec="seconds")
-            if row is None:
-                row = SystemConfig(key="scheduler_heartbeat", value=stamp)
-                db.add(row)
-            else:
-                row.value = stamp
-                row.updated_at = local_now()
-            db.commit()
-        except Exception as exc:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-            print(f"[Scheduler] Failed to write heartbeat: {exc}")
-        finally:
-            db.close()
-
+    # ── 规则 job ─────────────────────────────────────────────────
     def add_rule_job(self, rule):
-        """添加规则调度任务"""
+        """把一条规则挂上调度器。调度参数非法就**不挂**，并如实说出口。"""
         if not rule.is_enabled:
             return
 
-        job_id = f'rule_{rule.id}'
-
+        job_id = f"rule_{rule.id}"
         if self._scheduler.get_job(job_id):
             self._scheduler.remove_job(job_id)
 
-        if rule.schedule_type == 'once':
+        if rule.schedule_type == "once":
             # 手动执行，不需要调度
+            self._job_specs.pop(job_id, None)
             return
 
         try:
-            if rule.schedule_type == 'interval':
-                # 解析 interval 格式: "3 minutes", "2 hours", "1 days"
-                parts = (rule.schedule_value or '').split()
-                if len(parts) == 2:
-                    value = int(parts[0])
-                    unit = parts[1].lower()
+            trigger = rule_runner.parse_schedule(rule.schedule_type, rule.schedule_value)
+        except rule_runner.ScheduleError as exc:
+            # 早先这里是 print 一下就 return —— 规则照常保存、永远不跑、界面上
+            # 还看不出来。现在至少日志里说清楚，且 status 接口会把它标红。
+            print(f"[Scheduler] Rule {rule.id} 「{rule.name}」不排期：{exc}")
+            self._job_specs.pop(job_id, None)
+            return
 
-                    if unit in ['second', 'seconds']:
-                        seconds = value
-                    elif unit in ['minute', 'minutes']:
-                        seconds = value * 60
-                    elif unit in ['hour', 'hours']:
-                        seconds = value * 3600
-                    elif unit in ['day', 'days']:
-                        seconds = value * 86400
-                    else:
-                        print(f"[Scheduler] Unknown interval unit: {unit}")
-                        return
+        rule_id = rule.id
 
-                    trigger = IntervalTrigger(seconds=seconds)
-                else:
-                    print(f"[Scheduler] Invalid interval value: {rule.schedule_value}")
+        def execute_scheduled_rule(rule_id=rule_id):
+            """调度器线程里的入口：开独立 session，跑完记账并打活动心跳。"""
+            db = SessionLocal()
+            try:
+                rule_obj = db.query(Rule).filter(Rule.id == rule_id).first()
+                if not rule_obj or not rule_obj.is_enabled:
                     return
+                rule_runner.run_rule(db, rule_id, triggered_by="scheduler")
+            finally:
+                db.close()
+                SchedulerService.write_activity()
 
-            elif rule.schedule_type == 'cron':
-                trigger = CronTrigger.from_crontab(rule.schedule_value)
-
-            else:
-                print(f"[Scheduler] Unknown schedule type: {rule.schedule_type}")
-                return
-
-            def execute_scheduled_rule():
-                """执行定时规则（后台线程，独立 session）"""
-                db = SessionLocal()
-                try:
-                    rule_obj = db.query(Rule).filter(Rule.id == rule.id).first()
-                    if not rule_obj or not rule_obj.is_enabled:
-                        return
-
-                    print(f"[Scheduler] Executing rule: {rule_obj.name} (ID: {rule.id})")
-
-                    es = ESService(config=_get_es_config_from_db(db))
-
-                    stages = []
-                    output_mapping = {}
-                    if rule_obj.stages:
-                        try:
-                            stages = json.loads(rule_obj.stages)
-                            output_mapping = json.loads(rule_obj.output_mapping) if rule_obj.output_mapping else {}
-                        except Exception:
-                            pass
-
-                    if stages:
-                        results = es.execute_multi_stage_rule(stages, output_mapping)
-                    else:
-                        nodes = json.loads(rule_obj.nodes or '[]')
-                        results = es.execute_query(rule_obj.es_index, nodes)
-
-                    # 反向映射 output_mapping 字段（中→英），确保 Action mapping 能匹配
-                    from app.services.rule_executor import reverse_output_mapping, record_execution_log
-                    results = reverse_output_mapping(output_mapping, results)
-
-                    # 写入 MySQL（actions）
-                    actions = json.loads(rule_obj.actions or '[]')
-                    # 给每个动作带上规则元数据（create_alert / telegram 都要用）
-                    for act in actions:
-                        act["_rule_id"] = rule_obj.id
-                        act["_rule_name"] = rule_obj.name
-                        act["_rule_severity"] = getattr(rule_obj, "severity", "medium")
-                    executor = RuleExecutor(db)
-                    written = executor.process_actions(actions, results)
-
-                    # 存储触发告警的ES原始日志
-                    if executor.created_alert_ids and stages:
-                        _store_raw_logs_for_alerts(db, es, stages, executor.created_alert_ids)
-
-                    # 更新规则状态
-                    rule_obj.last_run = local_now()
-                    rule_obj.run_count = (rule_obj.run_count or 0) + 1
-                    db.commit()
-
-                    # 记录执行日志
-                    record_execution_log(
-                        db,
-                        rule_id=rule_obj.id,
-                        rule_name=rule_obj.name,
-                        alert_count=executor.last_alert_count,
-                        detail={
-                            "trigger": "scheduler",
-                            "total_results": len(results),
-                            "mysql_written": executor.last_mysql_written,
-                            "alert_created": executor.last_alert_count,
-                            "total_written": written
-                        },
-                        status="success"
-                    )
-
-                    print(f"[Scheduler] Rule {rule_obj.name} executed: {len(results)} results, {written} written")
-
-                except Exception as e:
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                    print(f"[Scheduler] Rule execution failed: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    # 记录失败执行日志
-                    try:
-                        from app.services.rule_executor import record_execution_log
-                        record_execution_log(
-                            db,
-                            rule_id=rule.id,
-                            rule_name=getattr(rule, 'name', ''),
-                            alert_count=0,
-                            detail={"trigger": "scheduler"},
-                            status="error",
-                            error_message=str(e)[:2000]
-                        )
-                    except Exception:
-                        pass
-                finally:
-                    db.close()
-
+        try:
             self._scheduler.add_job(
                 execute_scheduled_rule,
                 trigger=trigger,
@@ -325,33 +276,32 @@ class SchedulerService:
                 rule.schedule_type,
                 (rule.schedule_value or "").strip(),
             )
-
-            # 更新 next_run（APScheduler 3.x 兼容）
-            try:
-                job = self._scheduler.get_job(job_id)
-                if job is not None:
-                    db2 = SessionLocal()
-                    try:
-                        r2 = db2.query(Rule).filter(Rule.id == rule.id).first()
-                        if r2:
-                            nrt = getattr(job, 'next_run_time', None)
-                            r2.next_run = nrt
-                            db2.commit()
-                    finally:
-                        db2.close()
-            except Exception as e:
-                print(f"[Scheduler] Failed to update next_run for rule {rule.id}: {e}")
-
-            print(f"[Scheduler] Added job for rule: {rule.name} (ID: {rule.id}, Type: {rule.schedule_type}, Value: {rule.schedule_value})")
-
+            self._touch_next_run(rule_id, job_id)
+            print(
+                f"[Scheduler] Added job for rule: {rule.name} "
+                f"(ID: {rule.id}, Type: {rule.schedule_type}, Value: {rule.schedule_value})"
+            )
         except Exception as e:
             print(f"[Scheduler] Failed to add job for rule {rule.id}: {e}")
             import traceback
             traceback.print_exc()
 
+    def _touch_next_run(self, rule_id: int, job_id: str) -> None:
+        """把 APScheduler 算出来的 next_run_time 写回规则表，界面上才看得见下次几点跑。"""
+        job = self._scheduler.get_job(job_id)
+        db = SessionLocal()
+        try:
+            rule = db.query(Rule).filter(Rule.id == rule_id).first()
+            if rule is not None:
+                rule.next_run = getattr(job, "next_run_time", None) if job else None
+                db.commit()
+        except Exception as e:
+            print(f"[Scheduler] Failed to update next_run for rule {rule_id}: {e}")
+        finally:
+            db.close()
+
     def remove_rule_job(self, rule_id):
-        """移除规则调度任务"""
-        job_id = f'rule_{rule_id}'
+        job_id = f"rule_{rule_id}"
         if self._scheduler.get_job(job_id):
             self._scheduler.remove_job(job_id)
             print(f"[Scheduler] Removed job for rule ID: {rule_id}")
@@ -360,11 +310,7 @@ class SchedulerService:
     def reconcile(self) -> None:
         """让内存里的 job 集合跟规则表对齐。
 
-        API（uvicorn）和调度器（run_scheduler.py）是两个进程，JobStore 又是内存型，
-        所以 rules.py 里那些 ``# TODO: Add to scheduler`` 在架构上根本够不着 ——
-        新建的定时规则在重启调度器前一次都不会跑，改了周期仍按旧周期跑。
-
-        不引 IPC，改成定时对账：一个 tick 内收敛，进程崩了也能自愈。
+        新建/改周期/停用/删除都靠这里收敛 —— web 进程改完只 `mark_dirty()`。
         """
         db = SessionLocal()
         try:
@@ -372,7 +318,7 @@ class SchedulerService:
                 r.id: r
                 for r in db.query(Rule).filter(
                     Rule.is_enabled.is_(True),
-                    Rule.schedule_type.in_(['interval', 'cron'])
+                    Rule.schedule_type.in_(["interval", "cron"]),
                 ).all()
             }
         finally:
@@ -391,29 +337,16 @@ class SchedulerService:
 
         # 2) 只在调度参数真变了的时候重建；没变就别碰，否则定时器时钟被清零
         for rid, rule in desired.items():
-            job_id = f'rule_{rid}'
-            spec = (rule.schedule_type, (rule.schedule_value or '').strip())
+            job_id = f"rule_{rid}"
+            spec = (rule.schedule_type, (rule.schedule_value or "").strip())
             if self._scheduler.get_job(job_id) is not None and self._job_specs.get(job_id) == spec:
                 continue
             self.add_rule_job(rule)
 
     def load_all_rules(self):
-        """加载所有启用的定时规则"""
         self.reconcile()
         print(f"[Scheduler] Loaded {len(self._job_specs)} scheduled rules")
 
-    def get_jobs_info(self):
-        """获取所有任务信息"""
-        jobs = []
-        for job in self._scheduler.get_jobs():
-            jobs.append({
-                'id': job.id,
-                'name': job.name,
-                'next_run': str(job.next_run_time) if job.next_run_time else None,
-                'trigger': str(job.trigger)
-            })
-        return jobs
 
-
-# 全局单例
+# 全局实例
 scheduler_service = SchedulerService()

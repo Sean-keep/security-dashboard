@@ -127,7 +127,7 @@ def test_es_default_hides_password(client, db_session):
     assert data["password_set"] is True
 
 
-def test_user_list_is_admin_only(client, operator_user):
+def test_user_list_needs_account_or_authz(client, operator_user):
     op = login_headers(client, "operator", "OperPass1")
     assert client.get("/api/settings/users", headers=op).status_code == 403
 
@@ -145,6 +145,6 @@ def test_role_must_be_known(client, db_session):
     assert resp.json()["code"] == 400
 
 
-def test_login_logs_admin_only(client, operator_user):
+def test_login_logs_are_audit_only(client, operator_user):
     op = login_headers(client, "operator", "OperPass1")
     assert client.get("/api/settings/login-logs", headers=op).status_code == 403

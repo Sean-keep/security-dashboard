@@ -149,24 +149,6 @@ async def get_current_user(
     return user
 
 
-async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return current_user
-
-
-def require_roles(*roles: str):
-    """Dependency factory: allow only users whose role is in ``roles``."""
-
-    async def _dep(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires role: {', '.join(roles)}",
-            )
-        return current_user
-
-    return _dep
+# 角色鉴权已迁到 app.core.permissions（三权分立）。
+# 早先这里有 get_current_admin_user / require_roles，那是「admin 一把抓」的旧模型，
+# 与三权分立直接冲突，所以删掉而不是留着当兼容层 —— 留着就有人绕过去用。

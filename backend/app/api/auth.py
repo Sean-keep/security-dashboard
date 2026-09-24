@@ -246,7 +246,13 @@ async def logout(response: FastAPIResponse):
 
 
 @router.get("/me", response_model=Response[UserResponse])
-async def get_me(current_user: User = Depends(get_current_user)):
+async def get_me(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # 从库里读矩阵，不是从常量读 —— 系统管理员勾选分配之后 /me 要跟着变
+    from app.core.permissions import permissions_for
+
     return Response(data=UserResponse(
         id=current_user.id,
         username=current_user.username,
@@ -255,7 +261,8 @@ async def get_me(current_user: User = Depends(get_current_user)):
         is_active=current_user.is_active,
         last_login=current_user.last_login,
         login_count=current_user.login_count,
-        created_at=current_user.created_at
+        created_at=current_user.created_at,
+        permissions=sorted(permissions_for(current_user.role, db)),
     ))
 
 

@@ -19,8 +19,11 @@ from app.models.user import User
 from app.models.config import SystemConfig
 from app.schemas.rule import RuleCreate, RuleUpdate, RuleResponse
 from app.schemas.common import Response, PaginatedResponse, PaginatedData
-from app.api.security import get_current_user, require_roles
+from app.api.security import get_current_user
+from app.core.permissions import require_permission
 from app.services.es_service import ESService, ESConfig
+from app.services import rule_runner
+from app.services.scheduler_service import SchedulerService
 from app.utils.timezone import format_dt, local_now
 
 router = APIRouter(prefix="/rules", tags=["Rules"])
@@ -204,29 +207,39 @@ def _rule_to_response(rule: Rule, db: Session = None, counts_by_day: Dict[str, i
 
 
 
-@router.get("/scheduler/status", response_model=Response)
-async def scheduler_status(
+def _schedule_error(schedule_type: str, schedule_value: str) -> Optional[str]:
+    """保存前校验调度参数。返回错误文案，合法则返回 None。
+
+    早先这里什么都不校验 —— 存一条 `cron: 99 * * * *` 的规则会「保存成功」，
+    然后永远不跑，界面上还看不出来（调度器那边只是 print 一行就 return）。
+    """
+    try:
+        rule_runner.parse_schedule(schedule_type, schedule_value)
+    except rule_runner.ScheduleError as exc:
+        return str(exc)
+    return None
+
+
+@router.post("/schedule-preview", response_model=Response[Dict[str, Any]])
+async def schedule_preview(
+    request: Dict[str, Any],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get scheduler status"""
-    try:
-        from app.services.scheduler_service import SchedulerService
-        ss = SchedulerService()
-        jobs = []
-        for job in ss.scheduler.get_jobs():
-            jobs.append({
-                "id": job.id,
-                "name": job.name,
-                "next_run": str(getattr(job, 'next_run_time', None) or ''),
-                "trigger": str(job.trigger)
-            })
-        return Response(data={
-            "running": ss.scheduler.running,
-            "jobs": jobs
-        })
-    except Exception as e:
-        return Response(code=500, msg=f"获取调度器状态失败: {str(e)}")
+    """调度参数预检：返回最近几次触发时间。
+
+    和保存校验走同一条 `rule_runner.parse_schedule` —— 打字时说合法、存进去
+    却不合法的两套逻辑以前是会分叉的。**故意不抛异常**，打到一半的表达式回
+    `valid: false` 就行。
+    """
+    preview = rule_runner.preview_schedule(
+        request.get("schedule_type", ""),
+        request.get("schedule_value", ""),
+        count=int(request.get("count", 3) or 3),
+    )
+    return Response(data=preview)
+
+
 @router.get("/es-health", response_model=Response[Dict[str, Any]])
 async def es_health(
     db: Session = Depends(get_db),
@@ -259,7 +272,7 @@ async def es_indices(
 async def es_preview(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """
     ES query preview (supports both old and new format)
@@ -308,7 +321,7 @@ async def es_preview(
 async def telegram_test(
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """用当前表单里填的凭据发一条测试消息，不落库。
 
@@ -391,9 +404,13 @@ async def list_rules(
 async def create_rule(
     request: RuleCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Create a new rule"""
+    err = _schedule_error(request.schedule_type, request.schedule_value)
+    if err:
+        return Response(code=400, msg=err)
+
     # 注入危险等级到 actions。severity_conditions 是**每个 action 自己**的字段，
     # 不是 RuleCreate 顶层的 —— 早先那个 hasattr(...) 永远为 False，死代码。
     actions = _inject_severity(request.actions, request.severity)
@@ -416,7 +433,8 @@ async def create_rule(
     db.refresh(rule)
 
     # 调度器是独立进程（run_scheduler.py），这里够不着它的内存 JobStore。
-    # 由 SchedulerService.reconcile 在下一个 tick 收敛，见 scheduler_service.py。
+    # 置脏位，run_scheduler 下一个 tick（≤5 秒）就会 reconcile。
+    SchedulerService.mark_dirty()
     return Response(msg="规则创建成功", data=_rule_to_response(rule, db))
 
 
@@ -439,7 +457,7 @@ async def update_rule(
     rule_id: int,
     request: RuleUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Update rule"""
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
@@ -493,13 +511,21 @@ async def update_rule(
             ensure_ascii=False
         )
     
+    # 校验「更新后的」调度参数，而不是只看本次提交了哪几个字段 ——
+    # 只改 schedule_value 的 PUT 里 schedule_type 是 None，拿 None 去校验会误判。
+    new_type = update_data.get("schedule_type", rule.schedule_type)
+    new_value = update_data.get("schedule_value", rule.schedule_value)
+    err = _schedule_error(new_type, new_value)
+    if err:
+        return Response(code=400, msg=err)
+
     for field, value in update_data.items():
         setattr(rule, field, value)
-    
+
     db.commit()
     db.refresh(rule)
 
-    # 同上：调度参数的变更由 SchedulerService.reconcile 收敛
+    SchedulerService.mark_dirty()
     return Response(msg="规则更新成功", data=_rule_to_response(rule, db))
 
 
@@ -507,17 +533,18 @@ async def update_rule(
 async def delete_rule(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Delete rule"""
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
     if not rule:
         return Response(code=404, msg="规则不存在")
 
-    # 同上：残留 job 由 SchedulerService.reconcile 清理
     db.delete(rule)
     db.commit()
 
+    # 残留 job 由 SchedulerService.reconcile 清理
+    SchedulerService.mark_dirty()
     return Response(msg="删除成功")
 
 
@@ -525,7 +552,7 @@ async def delete_rule(
 async def run_rule(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Run rule (preview ES results, no write)"""
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
@@ -564,86 +591,26 @@ async def run_rule(
 async def execute_rule_endpoint(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
-    """执行规则（含 actions 写 MySQL）"""
-    from datetime import datetime
-    from app.services.rule_executor import RuleExecutor
+    """执行规则（含 actions 写 MySQL）。
 
-    rule = db.query(Rule).filter(Rule.id == rule_id).first()
-    if not rule:
-        return Response(code=404, msg="规则不存在")
-    try:
-        es = _get_es(db)
-        stages = []
-        output_mapping = {}
-        if rule.stages:
-            try:
-                stages = json.loads(rule.stages)
-                output_mapping = json.loads(rule.output_mapping) if rule.output_mapping else {}
-            except Exception:
-                pass
-        if stages:
-            results = es.execute_multi_stage_rule(stages, output_mapping)
-        else:
-            nodes = json.loads(rule.nodes or "[]")
-            results = es.execute_query(rule.es_index, nodes)
-        from app.services.rule_executor import reverse_output_mapping
-        results = reverse_output_mapping(output_mapping, results)
-
-        actions = json.loads(rule.actions or "[]")
-        # 给每个动作带上规则元数据。create_alert 和 telegram 都要规则名，
-        # write_mysql 忽略这几个键也没副作用。
-        for act in actions:
-            act["_rule_id"] = rule.id
-            act["_rule_name"] = rule.name
-            act["_rule_severity"] = getattr(rule, "severity", "medium")
-        executor = RuleExecutor(db)
-        written = executor.process_actions(actions, results)
-
-        # 存储触发告警的ES原始日志
-        if executor.created_alert_ids and stages:
-            from app.services.scheduler_service import _store_raw_logs_for_alerts
-            _store_raw_logs_for_alerts(db, es, stages, executor.created_alert_ids)
-
-        rule.last_run = local_now()
-        rule.run_count = (rule.run_count or 0) + 1
-        db.commit()
-
-        # 记录执行日志
-        from app.services.rule_executor import record_execution_log
-        record_execution_log(
-            db,
-            rule_id=rule.id,
-            rule_name=rule.name,
-            alert_count=executor.last_alert_count,
-            detail={
-                "trigger": "manual",
-                "total_results": len(results),
-                "mysql_written": executor.last_mysql_written,
-                "alert_created": executor.last_alert_count,
-                "total_written": written
-            },
-            status="success"
-        )
-
-        return Response(
-            msg=f"执行完成，共 {len(results)} 条记录，写入 {written} 条",
-            data={"total": len(results), "written": written, "preview": results[:20]}
-        )
-    except Exception as e:
-        db.rollback()
-        try:
-            from app.services.rule_executor import record_execution_log
-            record_execution_log(
-                db,
-                rule_id=rule.id,
-                rule_name=rule.name,
-                alert_count=0,
-                detail={"trigger": "manual"},
-                status="error",
-                error_message=str(e)[:2000]
-            )
-        except Exception:
-            pass
-        return Response(code=500, msg=f"执行失败: {str(e)}")
+    业务逻辑在 `rule_runner.run_rule` —— 和调度器跑的是同一份，只有
+    `triggered_by="manual"` 这个标记不同。早先这里是一份 90 行的重复拷贝，
+    和 `scheduler_service` 里那个闭包各修各的，会走样。
+    """
+    result = rule_runner.run_rule(db, rule_id, triggered_by="manual", keep_preview=True)
+    if result.error and result.error.startswith("规则 "):
+        return Response(code=404, msg=result.error)
+    if result.status != "success":
+        return Response(code=500, msg=f"执行失败: {result.error or '未知错误'}")
+    return Response(
+        msg=f"执行完成，共 {result.total} 条记录，写入 {result.written} 条",
+        data={
+            "total": result.total,
+            "written": result.written,
+            "alert_count": result.alert_count,
+            "duration_ms": result.duration_ms,
+            "preview": result.preview,
+        },
+    )

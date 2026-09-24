@@ -53,8 +53,14 @@ export const alerts = {
 export const settings = {
   users: () => request.get('/settings/users'),
   createUser: (data) => request.post('/settings/users', data),
+  // 账号资料（昵称/密码/启用）。**不含 role** —— 改角色是「授权」，走 updateUserRole。
   updateUser: (id, data) => request.put(`/settings/users/${id}`, data),
+  updateUserRole: (id, role) => request.put(`/settings/users/${id}/role`, { role }),
   deleteUser: (id) => request.delete(`/settings/users/${id}`),
+  // 三权分立矩阵（任意登录用户可看，不是秘密）
+  getPermissions: () => request.get('/settings/permissions'),
+  // 整张「角色 → 权限」矩阵一次性提交。三权独占是跨角色的约束，一次存一行校验不了。
+  savePermissions: (roles) => request.put('/settings/permissions', { roles }),
   getConfig: () => request.get('/settings/config'),
   saveConfig: (updates) => request.put('/settings/config', { updates }),
   loginLogs: (params) => request.get('/settings/login-logs', { params }),
@@ -129,7 +135,14 @@ export const executionLogs = {
 // ── 调度器 ──
 export const scheduler = {
   status: () => request.get('/scheduler/status'),
+  health: () => request.get('/scheduler/health'),
 }
+
+// ── 调度参数预检 ──
+// 和保存校验走同一条后端路径（rule_runner.parse_schedule），打字时说合法、
+// 存进去却不合法的两套逻辑会分叉。
+export const schedulePreview = (schedule_type, schedule_value, count = 3) =>
+  request.post('/rules/schedule-preview', { schedule_type, schedule_value, count })
 
 // ── 首页概览 ──
 // 优先走后端聚合接口 GET /dashboard/stats；404 时退回 3 端点拼装（Promise.allSettled，
@@ -186,7 +199,8 @@ export const remoteApi = {
   listLogs: (id, params) => request.get(`/remote/endpoints/${id}/logs`, { params }),
   clearLogs: (id) => request.delete(`/remote/endpoints/${id}/logs`),
   deleteLog: (id) => request.delete(`/remote/logs/${id}`),
-  // 发送方：第一包特征聚出来的人，手动绑定后才进日报
+  // 发送方：第一包特征聚出来的人。绑定只是给它起名字，**不是**进日报的闸门
+  // —— 日报的闸门是接口勾选，勾了就取最近一条。
   listSenders: (params) => request.get('/remote/senders', { params }),
   bindSender: (id, displayName) => request.post(`/remote/senders/${id}/bind`, { display_name: displayName }),
   rejectSender: (id) => request.post(`/remote/senders/${id}/reject`),

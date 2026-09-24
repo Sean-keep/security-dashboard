@@ -11,7 +11,8 @@ from app.models.base import get_db
 from app.models.operation_log import OperationLog
 from app.models.user import User
 from app.schemas.common import Response, PaginatedResponse, PaginatedData
-from app.api.security import get_current_user, require_roles
+from app.api.security import get_current_user
+from app.core.permissions import require_permission
 
 router = APIRouter(prefix="/logs", tags=["Logs"])
 
@@ -64,7 +65,8 @@ async def list_logs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    # 审计日志只给审计管理员 —— 三权里「看审计」独占，系统/安全管理员都看不到。
+    current_user: User = Depends(require_permission("audit"))
 ):
     """List logs with filtering and pagination"""
     from sqlalchemy import or_
@@ -115,7 +117,7 @@ async def create_log(
     request: OperationLogCreate,
     http_request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin", "operator"))
+    current_user: User = Depends(require_permission("operate"))
 ):
     """Write an operation log entry.
 

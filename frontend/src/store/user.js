@@ -2,12 +2,16 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { setToken, getToken, clearToken } from '@/api/token'
 import request from '@/api/request'
+import { ROLE_PERMISSIONS, roleLabel, roleTag } from '@/config/roles'
 
 function normalizeUser(info) {
   // Support both flat { role } and nested { user: { role } } formats
   if (info && info.user && info.user.role) return info.user
   return info || {}
 }
+
+// 旧角色名 → 新角色名。后端迁移会改库，但 localStorage 里可能还缓存着旧值。
+const LEGACY_ROLE = { admin: 'sys_admin' }
 
 export const useUserStore = defineStore('user', () => {
   const _raw = JSON.parse(localStorage.getItem('userInfo') || '{}')
@@ -20,11 +24,29 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(
     () => !!token.value || !!(userInfo.value && (userInfo.value.id || userInfo.value.username))
   )
-  // Support both flat and nested role
-  const isAdmin = computed(() => {
+
+  const role = computed(() => {
     const u = userInfo.value || {}
-    return u.role === 'admin' || (u.user && u.user.role === 'admin')
+    const r = u.role || (u.user && u.user.role) || 'viewer'
+    return ROLE_PERMISSIONS[r] ? r : (LEGACY_ROLE[r] || 'viewer')
   })
+
+  // 以后端返回的 permissions 为准；没拿到时才退回角色表推导。
+  // 显隐只是省得点出 403 —— 越权一律由后端挡。
+  const perms = computed(() => {
+    const u = userInfo.value || {}
+    if (Array.isArray(u.permissions) && u.permissions.length) return u.permissions
+    return ROLE_PERMISSIONS[role.value] || []
+  })
+
+  const hasPerm = (...names) => {
+    const held = perms.value
+    return names.some(n => held.includes(n))
+  }
+
+  const isAdmin = computed(() => hasPerm('manage_accounts', 'manage_authz', 'audit', 'manage_system'))
+  const roleName = computed(() => roleLabel(role.value))
+  const roleTagType = computed(() => roleTag(role.value))
 
   // token 可选（cookie-first）；refresh 仅作占位兼容，不落盘
   function setAuth(t, _refresh, info) {
@@ -66,5 +88,8 @@ export const useUserStore = defineStore('user', () => {
     return normalized
   }
 
-  return { token, userInfo, isLoggedIn, isAdmin, setAuth, clearAuth, logout, fetchMe }
+  return {
+    token, userInfo, isLoggedIn, role, perms, hasPerm,
+    isAdmin, roleName, roleTagType, setAuth, clearAuth, logout, fetchMe,
+  }
 })

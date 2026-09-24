@@ -137,8 +137,14 @@ def test_unselected_endpoint_stays_out_of_report(client):
     assert rows[0]["endpoint_name"] == "checked"
 
 
-def test_bind_is_admin_only(client, operator_user):
+def test_bind_needs_ops_power_not_view(client, operator_user, viewer_user):
+    """认人是写报告的人的日常活儿（operate），不是授权（manage_authz）。
+
+    旧注释把「绑定」说成铸身份的授权行为，那是在拿绑定当日报闸门的思路 ——
+    闸门早就改回接口勾选了，绑定只是给发送方起个名字。
+    """
     h_op = login_headers(client, "operator", "OperPass1")
+    h_v = login_headers(client, "viewer", "ViewPass1")
     h = login_headers(client)
     _make_endpoint(client, h, "rbac")
     _push("rbac", '{"a":1}', client=client)
@@ -146,6 +152,12 @@ def test_bind_is_admin_only(client, operator_user):
 
     # 读：任意登录角色
     assert client.get("/api/remote/senders", headers=h_op).status_code == 200
-    # 写：admin only（铸数据源身份 = 授权行为）
-    resp = client.post(f"/api/remote/senders/{sender_id}/bind", json={"display_name": "x"}, headers=h_op)
+    assert client.get("/api/remote/senders", headers=h_v).status_code == 200
+
+    # 只读用户不能绑
+    resp = client.post(f"/api/remote/senders/{sender_id}/bind", json={"display_name": "x"}, headers=h_v)
     assert resp.status_code == 403
+
+    # 业务操作员可以绑
+    resp = client.post(f"/api/remote/senders/{sender_id}/bind", json={"display_name": "x"}, headers=h_op)
+    assert resp.status_code == 200

@@ -18,10 +18,14 @@ _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
 def record_execution_log(db, rule_id, rule_name="", alert_count=0, detail=None,
-                         status="success", error_message=None):
+                         status="success", error_message=None,
+                         duration_ms=0, triggered_by="scheduler"):
     """创建一条规则执行记录。
     使用 raw SQL 写入，避免 ORM 表缓存导致 detail 列不可用。
     detail 可传 dict（自动序列化为 JSON 字符串）或字符串。
+
+    ``status`` 除了 success / error 还有 ``missed`` —— 错过触发窗口或被
+    ``max_instances=1`` 丢弃的那一轮。以前这类漏跑一点痕迹都不留。
     """
     try:
         if isinstance(detail, (dict, list)):
@@ -31,8 +35,10 @@ def record_execution_log(db, rule_id, rule_name="", alert_count=0, detail=None,
         db.execute(
             sa_text(
                 """INSERT INTO rule_execution_logs
-                   (rule_id, rule_name, executed_at, alert_count, detail, status, error_message)
-                   VALUES (:rule_id, :rule_name, :executed_at, :alert_count, :detail, :status, :error_message)"""
+                   (rule_id, rule_name, executed_at, alert_count, detail, status, error_message,
+                    duration_ms, triggered_by)
+                   VALUES (:rule_id, :rule_name, :executed_at, :alert_count, :detail, :status, :error_message,
+                           :duration_ms, :triggered_by)"""
             ),
             {
                 "rule_id": rule_id,
@@ -41,7 +47,9 @@ def record_execution_log(db, rule_id, rule_name="", alert_count=0, detail=None,
                 "alert_count": alert_count or 0,
                 "detail": detail_str,
                 "status": status,
-                "error_message": error_message
+                "error_message": error_message,
+                "duration_ms": int(duration_ms or 0),
+                "triggered_by": triggered_by or "scheduler",
             }
         )
         db.commit()
