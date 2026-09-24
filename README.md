@@ -15,6 +15,7 @@
 - [快速启动（Docker）](#快速启动docker推荐)
 - [手动部署](#手动部署不使用-docker)
 - [数据库迁移](#数据库迁移)
+- [库表结构体检](#库表结构体检)
 - [测试](#测试)
 - [监控接入](#监控接入metrics)
 - [初始账号](#初始账号)
@@ -323,7 +324,9 @@ security-dashboard/
 │       ├── config/         # 角色标签等展示用常量
 │       └── router/         # 路由（hash 模式）
 ├── docs/                   # 设计文档、迁移说明、基线 SQL
-├── scripts/deploy.sh       # 增量同步进单体容器
+├── scripts/
+│   ├── deploy.sh           # 增量同步进单体容器
+│   └── check_mysql_schema.sql  # 库表结构体检（缺表/缺列/类型不符）
 └── docker-compose.yml
 ```
 
@@ -339,6 +342,56 @@ security-dashboard/
 docker compose exec -T mysql mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" security_dashboard \
   < backend/migrations/<文件名>.sql
 ```
+
+> **给模型加字段时的三步**（漏第二步就是「表在、列没了」）：
+> 1. 改 `app/models/` 下的模型；
+> 2. 在 `backend/migrations/` 放一份幂等 `ALTER`，并在 `docs/migrations.md` 登记；
+> 3. 在 `scripts/check_mysql_schema.sql` 的 `_sc_expect` 里补一行 —— 否则下一体检会误报。
+>
+> 旧库升上来后拿[库表结构体检](#库表结构体检)核对一遍。
+
+## 库表结构体检
+
+`scripts/check_mysql_schema.sql` —— 把线上库的真实结构（`information_schema`）跟当前模型快照对一遍，抓**旧版本升上来之后的缺表 / 缺列 / 类型不符**。
+
+```bash
+# Docker 单体容器
+docker exec -i security-dashboard-v2 sh -c \
+  'set -a; . /opt/security-dashboard/backend/.env; set +a; \
+   mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' \
+  < scripts/check_mysql_schema.sql
+
+# 手动部署 / 任何能连上 MySQL 的机器
+cd /opt/security-dashboard
+set -a; . backend/.env; set +a
+mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" \
+  < scripts/check_mysql_schema.sql
+
+# 或进 mysql 交互式里 source（路径写绝对路径）
+mysql -u<user> -p security_dashboard
+mysql> source /opt/security-dashboard/scripts/check_mysql_schema.sql
+```
+
+输出五个结果集：
+
+| 结果集 | 含义 |
+|--------|------|
+| ① 缺表 | 整张表没有 |
+| ② 缺列 | `create_all()` 补不了，必须 `ALTER` —— **最常见的升级事故** |
+| ③ 类型不符 | 老字段类型跟现在对不上（只提示，`MODIFY` 会动已有数据） |
+| ④ 补齐脚本 | 按「先建表 → 再加列 → 最后改类型」排好序，可直接拷去执行 |
+| ⑤ 结论 | 三个数字全是 0 就说明结构对得上 |
+
+**安全性**：纯 SQL。业务表只通过 `information_schema` 读**结构元数据**，不读不改业务数据；写操作只落在 `_sc_*` 中间表上，跑完自删。账号需要该库的 `CREATE` / `DROP` 权限（README 那种 `GRANT ALL PRIVILEGES ON security_dashboard.*` 的账号没问题）。
+
+**维护**：模型加了字段就在 `_sc_expect` 里补一行，共 6 列：
+
+```sql
+(表名, 列名, MySQL类型, 类型族, 是否NOT NULL, 是否主键)
+-- 例：('rule_execution_logs','duration_ms','INT','int',0,0)
+```
+
+类型族只用于比对，取值 `int` / `bool` / `float` / `str` / `text` / `datetime` / `date` / `time` / `json` / `blob`。刻意不比类型字符串 —— `BOOL` 在 MySQL 里是 `tinyint(1)`，`MEDIUMTEXT` / `TEXT` 都算 `text`。
 
 ## 测试
 

@@ -5,6 +5,10 @@
 
 > `create_all()` 只创建**缺失的表**，不会给已存在的表补列。
 > 给已有模型加字段时，**必须**手工对线上库执行一次 `ALTER TABLE`。
+>
+> 旧库升上来后，用 [`scripts/check_mysql_schema.sql`](../scripts/check_mysql_schema.sql)
+> 核对一遍（见 README「库表结构体检」）—— 缺列会被直接报出来并给出 `ALTER` 草稿。
+> 模型加了字段也要在它的 `_sc_expect` 里补一行。
 
 ## 目录结构
 
