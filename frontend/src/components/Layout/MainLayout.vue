@@ -15,6 +15,7 @@
 
       <el-menu
         :default-active="activeMenu"
+        :default-openeds="openeds"
         :collapse="isCollapse"
         :collapse-transition="false"
         router
@@ -46,8 +47,10 @@
           <template #title>调度中心</template>
         </el-menu-item>
 
-        <!-- 日常巡检（父级，点击后展开子项）-->
-        <el-sub-menu v-if="!isCollapse" :default-active="activeMenu" :default-openeds="defaultOpeneds" :popper-class="'menu-popper'">
+        <!-- 日常巡检 / 系统设置：一直用 el-sub-menu，不要按 isCollapse 换成扁平项。
+             折叠侧栏时 Element Plus 自带弹出子菜单（.menu-popper），
+             以前那种「折叠就只留一个入口」的做法会让其余 7 个页面点不到。 -->
+        <el-sub-menu index="inspect" popper-class="menu-popper">
           <template #title>
             <el-icon><Monitor /></el-icon>
             <span>日常巡检</span>
@@ -70,18 +73,7 @@
           </el-menu-item>
         </el-sub-menu>
 
-        <!-- 折叠状态下的日常巡检 -->
-        <el-menu-item v-if="isCollapse" index="/remote">
-          <el-icon><Monitor /></el-icon>
-          <template #title>远程接收</template>
-        </el-menu-item>
-        <el-menu-item v-if="isCollapse" index="/inspection/scripts">
-          <el-icon><Monitor /></el-icon>
-          <template #title>日常巡检</template>
-        </el-menu-item>
-
-        <!-- 系统设置（父级，点击后展开子项）-->
-        <el-sub-menu v-if="!isCollapse" :default-active="activeMenu" :default-openeds="defaultOpeneds" :popper-class="'menu-popper'">
+        <el-sub-menu index="settings" popper-class="menu-popper">
           <template #title>
             <el-icon><Tools /></el-icon>
             <span>系统设置</span>
@@ -111,12 +103,6 @@
             <template #title>日志中心</template>
           </el-menu-item>
         </el-sub-menu>
-
-        <!-- 折叠状态下的系统设置 -->
-        <el-menu-item v-if="isCollapse" index="/settings/users">
-          <el-icon><Tools /></el-icon>
-          <template #title>系统设置</template>
-        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -288,11 +274,19 @@ onUnmounted(() => {
   if (schedulerTimer) clearInterval(schedulerTimer)
 })
 
-// 默认展开的一级菜单（不预展开，访问时才展开）
-const defaultOpeneds = ref([])
+// 进来就在哪一组，哪一组默认展开 —— 否则直接开 /settings/users，
+// 「系统设置」是合着的，看不出自己在这一组的哪一页。
+// el-menu 只在挂载时读一次 default-openeds，之后的展开/收起由用户自己控制。
+const openeds = computed(() => {
+  const p = route.path
+  if (p.startsWith('/inspection') || p === '/remote') return ['inspect']
+  if (p.startsWith('/settings')) return ['settings']
+  return []
+})
 
-// 当前激活的完整路由（含 query）
-const activeMenu = computed(() => route.fullPath)
+// 当前激活的菜单项。用 path 不是 fullPath —— 带 query 时 fullPath
+// 匹配不到任何 index，菜单就高亮不了。
+const activeMenu = computed(() => route.path)
 
 // 面包屑
 const routeTitles = {
@@ -304,6 +298,7 @@ const routeTitles = {
   '/inspection/scripts': { parent: '日常巡检', title: '脚本执行' },
   '/inspection/report': { parent: '日常巡检', title: '巡检报告' },
   '/inspection/metrics': { parent: '日常巡检', title: '系统监控' },
+  '/remote': { parent: '日常巡检', title: '远程接收' },
   '/settings/users': { parent: '系统设置', title: '用户管理' },
   '/settings/permissions': { parent: '系统设置', title: '权限管理' },
   '/settings/ui': { parent: '系统设置', title: '界面管理' },
