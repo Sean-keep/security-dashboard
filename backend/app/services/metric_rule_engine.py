@@ -27,10 +27,22 @@ for s in 返回的每条 series:                # 每条 series 独立计时
     elif 已告警:
         产出结果行                          # 持续中，靠去重冷却压噪音
 
-for 上一轮有、这一轮没返回的 series:        # exporter 挂了 / 实例下线
+for 本次没取到有效取值的 series:            # 见下「没数据就当没数据」
     if 已告警: 发「已恢复（数据中断）」+ 关告警
     删掉状态行                              # 临时性 series 不留垃圾
 ```
+
+**「按接收的数据来算，没有数据就当没数据」**
+
+「持续 N 分钟」只能由**收到的**观测撑起来。一次检查里某个 series 没取到有效值，
+这次就等于它没上报 —— 既不能延长计时，也不能让告警挂着。包括两种：
+
+* **彻底消失**：上一轮有、这一轮查询结果里没了（exporter 挂了 / 实例下线）
+* **没取到值**：还在结果里但没有有效取值（接口这一分钟没流量 ——
+  `histogram_quantile` 对全 0 桶返回 NaN）
+
+两者走同一条收尾路。第二种以前被当成「序列还在」原样跳过，实测连续 5 轮 NaN
+之后 `recovered=0`、告警一直是 `pending` —— 接口一停流就永远关不掉。
 
 `firing` 这个标志是必需的：「条件成立但还没凑满时长」就回落时**不能**发恢复通知
 （本来就没告警过）。少了它会发一堆莫名其妙的「已恢复」。
@@ -38,9 +50,11 @@ for 上一轮有、这一轮没返回的 series:        # exporter 挂了 / 实�
 ## 两条刻意取舍
 
 * **查询失败一律不动状态**（`no_data`）。Grafana 抖一下不该重置计时，更不该
-  把规则判失败 —— 用户明确要「不误报也不算失败」。
-* **观测断档超过 GRACE 就重新计时**。中间那一小时没查到，「连续成立」无从证明，
-  宁可漏报也不该凭空宣称「已持续 5 分钟」。已经在告警的不受影响（关掉比留着更糟）。
+  把规则判失败 —— 用户明确要「不误报也不算失败」。这和上面的「没数据」不是
+  一回事：这里连查询都没跑成，谈不上 series 上报了什么。
+* **调度断档超过 GRACE 就重新计时**。中间那一小时没检查，「连续成立」无从证明，
+  宁可漏报也不该凭空宣称「已持续 5 分钟」。已经在告警的不受影响 —— 这是
+  **调度**断了，不是 series 没数据，不能拿来当关单的理由。
 """
 from __future__ import annotations
 
@@ -87,6 +101,9 @@ class MetricEvalOutcome:
     # 再开一条新单 —— 实测出过「P95 4.8125s（阈值 >5s）反而告警」。
     recoveries: List[Dict[str, Any]] = field(default_factory=list)
     series_seen: int = 0
+    # 查询返回了、但没取到有效取值的条数（NaN 之类）。和 `series_seen` 加起来
+    # 才是「这次收到了多少」—— 只报前者，规则日志里就看不出被丢了多少。
+    series_no_value: int = 0
     breaching: int = 0
     recovered: int = 0
 
@@ -98,9 +115,18 @@ class MetricEvalOutcome:
             "breaching": self.breaching,
             "recovered": self.recovered,
         }
+        if self.series_no_value:
+            detail["series_no_value"] = self.series_no_value
         if self.no_data:
             detail["no_data"] = True
             detail["note"] = f"无数据：{self.reason}" if self.reason else "无数据"
+        elif self.series_no_value:
+            # 只报「有几条」交代不了账 —— 「按接收的数据来算」要能一眼看出
+            # 收到多少、其中几条这次没取到值被当成没数据。
+            detail["note"] = (
+                f"收到 {self.series_seen + self.series_no_value} 条 series，"
+                f"{self.series_seen} 条有取值，{self.series_no_value} 条无取值（按没数据处理）"
+            )
         return detail
 
 
@@ -293,33 +319,27 @@ def evaluate_metric_rule(db, rule, *, now: Optional[datetime] = None) -> MetricE
 
     resp = metrics_service.query_instant(db, cfg.promql)
     if not resp.ok:
-        # 查询失败：**一行状态都不写**。既不重置计时，也不触发任何通知。
+        # 查询失败：**一行状态都不写**。既不重置计时，也不触发任何通知 ——
+        # 连查询都没跑成，谈不上 series 上报了什么，更不能拿来当关单的理由。
         outcome.no_data = True
         outcome.reason = resp.error or "查询失败"
         return outcome
 
-    # `seen` 按「序列出现在结果里」算，跟有没有取到值无关 —— NaN 是「序列还在、
-    # 这次没值」，不是「序列消失了」。把两者混为一谈会把一条正在告警的 series
-    # 误判成数据中断。
-    seen: set = set()
-    for s in resp.series:
-        seen.add(metrics_service.series_key(s.labels))
-
-    if not resp.series:
-        outcome.no_data = True
-        outcome.reason = "查询无序列"
-        # 一次成功但一个序列都没有：全部消失，按数据中断收尾
-        outcome.recovered += _gc_vanished(db, rule, seen, cfg, now, outcome)
-        db.commit()
-        return outcome
-
-    # NaN / 缺值不算观测 —— 既不触发也不算「掉下阈值」
+    # 「按接收的数据来算」：`seen` 只记本次**真的取到值**的 series。
+    # 没取到值（NaN）和彻底没返回都算「这次没数据」，一起交给 `_gc_no_data` 收尾 ——
+    # 「持续 N 分钟」只能由收到的观测撑起来，中间没收到就是断了。
     series = [s for s in resp.series if metrics_service.is_usable(s.value)]
+    seen = {metrics_service.series_key(s.labels) for s in series}
+    outcome.series_seen = len(series)
+    outcome.series_no_value = len(resp.series) - len(series)
+
     if not series:
         outcome.no_data = True
-        outcome.reason = "序列均无有效取值"
-        outcome.series_seen = len(resp.series)
-        # 序列还在，只是没值 —— **不**当消失处理，状态原样留着
+        if not resp.series:
+            outcome.reason = "查询无序列"
+        else:
+            outcome.reason = f"序列均无有效取值（{len(resp.series)} 条）"
+        outcome.recovered += _gc_no_data(db, rule, seen, cfg, now, outcome)
         db.commit()
         return outcome
 
@@ -336,7 +356,6 @@ def evaluate_metric_rule(db, rule, *, now: Optional[datetime] = None) -> MetricE
 
         st.series_labels = json.dumps(s.labels or {}, ensure_ascii=False, default=str)
         st.last_value = value
-        outcome.series_seen += 1
 
         if not compare(value, cfg.operator, cfg.threshold):
             if st.firing:
@@ -354,8 +373,8 @@ def evaluate_metric_rule(db, rule, *, now: Optional[datetime] = None) -> MetricE
             st.last_check_at is not None
             and (now - st.last_check_at) > timedelta(seconds=GRACE_SECONDS)
         )
-        # 首次成立、或断档后（且还没告警）重新计时。已在告警的不动计时 ——
-        # 关掉一个正在响的告警比留着它更糟。
+        # 首次成立、或**调度**断档后（且还没告警）重新计时。已在告警的不动计时 ——
+        # 调度断了不代表指标回过，关掉一个正在响的告警比留着它更糟。
         if st.breach_since is None or (stale and not st.firing):
             st.breach_since = now
 
@@ -371,17 +390,26 @@ def evaluate_metric_rule(db, rule, *, now: Optional[datetime] = None) -> MetricE
             outcome.rows.append(build_metric_row(cfg, s.labels, key, value, breach_since=breach_since, now=now))
         st.last_check_at = now
 
-    outcome.recovered += _gc_vanished(db, rule, seen, cfg, now, outcome)
+    outcome.recovered += _gc_no_data(db, rule, seen, cfg, now, outcome)
     db.commit()
     return outcome
 
 
-def _gc_vanished(db, rule, seen: set, cfg: MetricConfig, now: datetime, outcome) -> int:
-    """上一轮有、这一轮没返回的 series：在告警的关掉并说清是数据中断。
+def _gc_no_data(db, rule, seen: set, cfg: MetricConfig, now: datetime, outcome) -> int:
+    """本次没取到有效取值的 series 收尾：在告警的关掉，状态行删掉。
 
-    「关不掉的告警比关早了更糟」——exporter 挂了以后那条告警永远不会自己消失，
-    只能在这里收尾。文案说实话（是中断不是真恢复）。
-    没告警就消失的只删状态、不发任何通知（本来也没什么要撤回的）。
+    「没有数据就当没数据」—— 没数据既撑不起「持续 N 分钟」，也不该让一条没有
+    观测支撑的告警一直挂着关不掉。两种情况走同一条路：
+
+    * **彻底消失**：上一轮有、这一轮查询结果里没了（exporter 挂了 / 实例下线）
+    * **没取到值**：还在结果里但没有有效取值（接口这一分钟没流量 ——
+      ``histogram_quantile`` 对全 0 桶返回 NaN）
+
+    后者以前被当成「序列还在」原样跳过，实测连续 5 轮 NaN 之后 ``recovered=0``、
+    告警一直是 ``pending`` —— 接口一停流就永远关不掉。
+
+    文案说实话：不是「已恢复」，是「已恢复（数据中断）」。没告警的只删状态、
+    不发任何通知（本来也没什么要撤回的）。
     """
     from app.models.metric_rule_state import RuleMetricState
 
@@ -473,7 +501,10 @@ def _recovery_message(rule, cfg, labels, identity, value, st, now: datetime, *, 
         f"指标: {cfg.promql}",
     ]
     if reason == "数据中断":
-        lines.append(f"该 series 已从查询结果中消失（exporter 挂了 / 实例下线），告警已关闭。")
+        # 覆盖两种「没数据」：彻底消失（exporter 挂了 / 实例下线）和这一分钟
+        # 根本没流量（histogram_quantile 对全 0 桶返回 NaN）。文案不能只说「消失」，
+        # 否则后一种看起来像误报。
+        lines.append("该 series 本次未取到有效观测（已下线，或这段时间没有流量），无法继续确认超阈值，告警已关闭。")
         if st.breach_since:
             lines.append(f"首次超阈值: {st.breach_since.strftime('%Y-%m-%d %H:%M:%S')}")
     else:

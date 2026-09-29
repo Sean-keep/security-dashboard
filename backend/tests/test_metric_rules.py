@@ -242,19 +242,159 @@ def test_fire_once_per_streak_then_reemit(db_session, monkeypatch):
     assert out.rows[0]["sustained_seconds"] >= 60
 
 
-def test_nan_series_does_not_fire(db_session, monkeypatch):
-    """NaN 不是「没超阈值」，是「没有观测」—— 不能当成一次回落。"""
-    rule = _make_rule(db_session, sustain_minutes=1)
+def test_nan_series_is_no_data_and_closes_alert(db_session, monkeypatch):
+    """没取到值 = 这次没上报：既撑不起「持续」，也不该让告警挂着关不掉。
+
+    以前把 NaN 当「序列还在」原样跳过 —— 实测连续 5 轮 NaN 之后 `recovered=0`、
+    告警一直是 `pending`，接口一停流就永远关不掉。文案也要说实话：不是「已恢复」
+    （那是真回落了），是「已恢复（数据中断）」。
+    """
+    from app.models.alert import Alert
+
+    tg = _fake_telegram(monkeypatch)
+    rule = _make_rule(db_session, actions=[
+        {"type": "create_alert", "severity": "high"},
+        {"type": "telegram", "bot_token": "T", "chat_id": "C"},
+    ], sustain_minutes=1)
     _patch_query(monkeypatch, _qr(({"instance": "web-01"}, 87.0)))
+    from app.services import rule_runner
     _evaluate(db_session, rule)
     _rewind(db_session, rule.id, breach_age=timedelta(minutes=1))
-    _evaluate(db_session, rule)   # 进入告警
+    rule_runner.run_rule(db_session, rule.id, triggered_by="manual")
+    assert db_session.query(Alert).one().status == "pending"
+
+    # 接口这一分钟没流量 → histogram_quantile 对全 0 桶返回 NaN，series 还在结果里
+    _patch_query(monkeypatch, _qr(({"instance": "web-01"}, float("nan"))))
+    out = _evaluate(db_session, rule)
+
+    assert out.rows == [], "没数据不该产出「又命中了」的结果行"
+    assert out.recovered == 1
+    assert out.no_data is True
+    assert out.recoveries[0]["recovery_reason"] == "数据中断", "NaN 不是回落，是没观测"
+    alert = db_session.query(Alert).one()
+    assert alert.status == "auto_resolved"
+    assert any("已恢复（数据中断）" in t for t in tg), tg
+    assert _states(db_session, rule.id) == []
+
+
+def test_nan_series_not_firing_is_silent(db_session, monkeypatch):
+    """没告警就断观测 → 只清状态，一条通知都不发。本来也没什么要撤回的。"""
+    tg = _fake_telegram(monkeypatch)
+    rule = _make_rule(db_session, actions=[
+        {"type": "create_alert", "severity": "high"},
+        {"type": "telegram", "bot_token": "T", "chat_id": "C"},
+    ], sustain_minutes=5)
+    _patch_query(monkeypatch, _qr(({"instance": "web-01"}, 87.0)))
+    _evaluate(db_session, rule)   # 开始计时，未触发
 
     _patch_query(monkeypatch, _qr(({"instance": "web-01"}, float("nan"))))
     out = _evaluate(db_session, rule)
     assert out.recovered == 0
+    assert out.no_data is True
+    assert tg == []
+    assert _states(db_session, rule.id) == []
+
+
+def test_all_nan_result_closes_every_series(db_session, monkeypatch):
+    """整个查询返回的序列都没取到值 → 按「没数据」记账，同时把在响的都关掉。"""
+    from app.models.alert import Alert
+
+    tg = _fake_telegram(monkeypatch)
+    rule = _make_rule(db_session, actions=[
+        {"type": "create_alert", "severity": "high"},
+        {"type": "telegram", "bot_token": "T", "chat_id": "C"},
+    ], sustain_minutes=1)
+    _patch_query(monkeypatch, _qr(
+        ({"instance": "web-01"}, 87.0),
+        ({"instance": "web-02"}, 95.0),
+    ))
+    from app.services import rule_runner
+    _evaluate(db_session, rule)
+    _rewind(db_session, rule.id, breach_age=timedelta(minutes=1))
+    rule_runner.run_rule(db_session, rule.id, triggered_by="manual")
+    assert db_session.query(Alert).count() == 2
+
+    _patch_query(monkeypatch, _qr(
+        ({"instance": "web-01"}, float("nan")),
+        ({"instance": "web-02"}, float("nan")),
+    ))
+    out = _evaluate(db_session, rule)
+
+    assert out.no_data is True
+    assert out.recovered == 2
+    assert out.rows == []
+    assert {a.status for a in db_session.query(Alert).all()} == {"auto_resolved"}
+    assert sum("已恢复（数据中断）" in t for t in tg) == 2, tg
+    assert _states(db_session, rule.id) == []
+
+
+def test_only_valueless_series_is_closed(db_session, monkeypatch):
+    """一批 series 里只断了一条：只关那一条，其它照常计时。"""
+    from app.models.alert import Alert
+
+    tg = _fake_telegram(monkeypatch)
+    rule = _make_rule(db_session, actions=[
+        {"type": "create_alert", "severity": "high"},
+        {"type": "telegram", "bot_token": "T", "chat_id": "C"},
+    ], sustain_minutes=1)
+    _patch_query(monkeypatch, _qr(
+        ({"instance": "web-01"}, 87.0),
+        ({"instance": "web-02"}, 95.0),
+    ))
+    from app.services import rule_runner
+    _evaluate(db_session, rule)
+    _rewind(db_session, rule.id, breach_age=timedelta(minutes=1))
+    rule_runner.run_rule(db_session, rule.id, triggered_by="manual")
+
+    _patch_query(monkeypatch, _qr(
+        ({"instance": "web-01"}, float("nan")),   # 这条停流了
+        ({"instance": "web-02"}, 95.0),           # 这条还在超阈值
+    ))
+    out = _evaluate(db_session, rule)
+
+    assert out.recovered == 1
+    assert out.no_data is False, "还有 series 取到值，不算「无数据」"
+    assert out.series_seen == 1
+    assert out.series_no_value == 1, "日志要能看出来被丢了几条 —— 只报有值的就看不出收了多少"
+    detail = out.to_detail()
+    assert detail["series_no_value"] == 1
+    assert detail["series_seen"] == 1
+    assert "无取值" in detail.get("note", ""), "执行摘要要说清楚有几条被当成了没数据"
+    assert [r["src_ip"] for r in out.rows] == ["web-02"], "还在响的那条得继续产出结果行"
+    assert sum("已恢复（数据中断）" in t for t in tg) == 1, tg
+    assert {a.src_ip: a.status for a in db_session.query(Alert).all()} == {
+        "web-01": "auto_resolved",
+        "web-02": "pending",
+    }
+    left = _states(db_session, rule.id)
+    assert len(left) == 1, "只该删掉没数据的那条状态"
+    assert "web-02" in left[0].series_labels
+    assert left[0].firing == 1
+
+
+def test_no_data_gap_breaks_sustain(db_session, monkeypatch):
+    """「持续」只能由**收到的**观测撑起来 —— 中间断一次就得重新计时。
+
+    否则空档能充数：明明中间那一轮什么都没观测到，还宣称「已持续 2 分钟」。
+    """
+    rule = _make_rule(db_session, sustain_minutes=1)
+    _patch_query(monkeypatch, _qr(({"instance": "web-01"}, 87.0)))
+    _evaluate(db_session, rule)                                    # 计时开始
+    _rewind(db_session, rule.id, breach_age=timedelta(minutes=1))   # 已经「成立 1 分钟」
+    before_gap = _states(db_session, rule.id)[0].breach_since
+
+    # 中间插一次「没数据」。要是它没把计时打断，下一行就该触发了。
+    _patch_query(monkeypatch, _qr(({"instance": "web-01"}, float("nan"))))
+    _evaluate(db_session, rule)
+    assert _states(db_session, rule.id) == [], "没数据就当没数据，状态清掉"
+
+    _patch_query(monkeypatch, _qr(({"instance": "web-01"}, 87.0)))
+    out = _evaluate(db_session, rule)
+
+    assert out.rows == [], "断档把「连续」打断了，不该接着原来的计时凑满时长"
     st = _states(db_session, rule.id)[0]
-    assert st.firing == 1   # 没被当成回落
+    assert st.breach_since is not None
+    assert st.breach_since > before_gap, "断档后计时必须从头开始，不能接着原来那个起点"
 
 
 # ── 恢复通知 ──────────────────────────────────────────────────────
