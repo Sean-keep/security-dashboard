@@ -28,7 +28,13 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="detail" label="执行摘要" min-width="300" show-overflow-tooltip />
+      <el-table-column prop="detail" label="执行摘要" min-width="300" show-overflow-tooltip>
+        <template #default="{ row }">
+          <!-- 指标规则的「无数据」是正常结果，不是失败 —— 单独打标，免得被当成出错 -->
+          <el-tag v-if="parseDetail(row).no_data" size="small" type="info" effect="plain" class="detail-tag">无数据</el-tag>
+          <span class="detail-text">{{ detailText(row) }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="error_message" label="错误信息" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
           <span v-if="row.error_message" style="color:var(--el-color-danger)">{{ row.error_message }}</span>
@@ -81,9 +87,30 @@ const loadExecutionLogs = async () => {
   }
 }
 
+// detail 列是 record_execution_log 存下来的 JSON 字符串（dict 自动序列化）。
+// 解析失败就当纯文本，别让一个坏行把整列表搞崩。
+const parseDetail = (row) => {
+  const raw = row?.detail
+  if (!raw || typeof raw !== 'string') return {}
+  try {
+    const obj = JSON.parse(raw)
+    return obj && typeof obj === 'object' ? obj : {}
+  } catch {
+    return {}
+  }
+}
+
+const detailText = (row) => {
+  const d = parseDetail(row)
+  if (d.note) return d.note
+  return row?.detail || ''
+}
+
 defineExpose({ open })
 </script>
 
 <style lang="scss" scoped>
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; }
+.detail-tag { margin-right: 6px; }
+.detail-text { color: var(--el-text-color-regular); }
 </style>

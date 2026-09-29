@@ -17,7 +17,7 @@ from app.models.rule import Rule
 from app.models.alert import Alert
 from app.models.user import User
 from app.models.config import SystemConfig
-from app.schemas.rule import RuleCreate, RuleUpdate, RuleResponse
+from app.schemas.rule import RuleCreate, RuleUpdate, RuleResponse, MetricConfig
 from app.schemas.common import Response, PaginatedResponse, PaginatedData
 from app.api.security import get_current_user
 from app.core.permissions import require_permission
@@ -130,6 +130,73 @@ def _alert_trend_for_rules(db: Session, rule_ids) -> Dict[int, Dict[str, int]]:
     return out
 
 
+def _parse_metric_config(rule: Rule) -> Optional[Dict[str, Any]]:
+    """读出 ``rules.metric_config``。坏 JSON 回 None，不抛。
+
+    出站时**补齐 ``sustain_minutes``** —— 库里存的是 ``duration_seconds``（执行层
+    的口径），表单填的是分钟（用户的口径）。少了这一项前端编辑弹窗会把「持续多久」
+    显示成空的。
+    """
+    if not rule.metric_config:
+        return None
+    try:
+        data = json.loads(rule.metric_config)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not data:
+        return None
+    out = dict(data)
+    duration = out.get("duration_seconds")
+    if out.get("sustain_minutes") is None and duration is not None:
+        try:
+            out["sustain_minutes"] = max(1, int(int(duration) / 60))
+        except (TypeError, ValueError):
+            out["sustain_minutes"] = 5
+    return out
+
+
+def _metric_error(source_type: str, metric: Optional[MetricConfig],
+                  has_stages: bool, has_nodes: bool) -> Optional[str]:
+    """指标规则的形状校验。返回错误文案，合法返回 None。
+
+    三条硬约束，都是被坑过才加的：
+      * **stages 必须为空** —— 指标规则不查 ES，带着阶段配置只会让人以为它会查，
+        然后在执行日志里看到 0 条结果却想不通。
+      * **schedule 服务端强制**，不信客户端 —— 见 `create_rule` / `update_rule`。
+      * **threshold 必须是有限数** —— pydantic 接受 NaN/Inf，而 NaN 参与比较
+        永远是 False，规则会「保存成功但永远不触发」。
+    """
+    if source_type != "metric":
+        return None
+    if metric is None:
+        return "指标规则必须填写 PromQL 与阈值配置"
+    if not (metric.promql or "").strip():
+        return "PromQL 表达式不能为空"
+    if metric.operator not in (">", ">=", "<", "<=", "=="):
+        return f"不支持的比较符「{metric.operator}」，可用：> >= < <= =="
+    import math
+    if not math.isfinite(metric.threshold):
+        return "阈值必须是有限数字（不能是 NaN / 无穷大）"
+    if metric.sustain_minutes < 1:
+        return "持续时长必须至少 1 分钟"
+    if has_stages:
+        return "指标规则不支持查询阶段（它查的是 Grafana/Prometheus，不是 ES）"
+    if has_nodes:
+        return "指标规则不支持筛选节点"
+    return None
+
+
+def _force_metric_schedule(source_type: str) -> Dict[str, str]:
+    """指标规则的服务端强制调度：固定每 60 秒检查。
+
+    「持续 N 分钟」的语义建立在每分钟一次的观测上，让用户改间隔只会把计时搞乱
+    ——填 30 分钟一次却说「持续 5 分钟」是自相矛盾的。表单上也不显示这一项。
+    """
+    if source_type == "metric":
+        return {"schedule_type": "interval", "schedule_value": "60 seconds"}
+    return {}
+
+
 def _rule_to_response(rule: Rule, db: Session = None, counts_by_day: Dict[str, int] = None) -> Dict[str, Any]:
     """Convert Rule model to response dict.
 
@@ -187,6 +254,8 @@ def _rule_to_response(rule: Rule, db: Session = None, counts_by_day: Dict[str, i
         "id": rule.id,
         "name": rule.name,
         "description": rule.description,
+        "source_type": rule.source_type or "logs",
+        "metric": _parse_metric_config(rule),
         "es_index": rule.es_index,
         "schedule_type": rule.schedule_type,
         "schedule_value": rule.schedule_value,
@@ -359,6 +428,50 @@ async def telegram_test(
     return Response(code=400, msg=f"发送失败：{err}")
 
 
+@router.post("/promql-test", response_model=Response[Dict[str, Any]])
+async def promql_test(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operate"))
+):
+    """跑一次 PromQL，回显命中的 series 和当前值。不落库、不推进计时。
+
+    和 `telegram-test` 同一个位置、同一个目的：让用户在保存规则之前就知道表达式
+    写对没有 —— 否则只能等调度跑完才发现一直查不到数据。**只读**，绝不触碰
+    `rule_metric_states`（点一下「测试」就把持续计时往前推是会误触发的）。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return Response(code=400, msg="请求体不是合法 JSON")
+
+    promql = (body.get("promql") or "").strip()
+    if not promql:
+        return Response(code=400, msg="PromQL 表达式为空")
+
+    from app.services import metrics_service
+
+    resp = metrics_service.query_instant(db, promql)
+    if not resp.ok:
+        return Response(code=400, msg=f"查询失败：{resp.error or '未知错误'}", data={
+            "total": 0, "series": [], "promql": promql,
+        })
+
+    rows = []
+    for s in resp.series:
+        if not metrics_service.is_usable(s.value):
+            continue
+        rows.append({
+            "identity": s.labels.get("instance") or s.labels.get("node") or s.labels.get("pod") or "",
+            "labels": s.labels,
+            "value": s.value,
+        })
+    return Response(
+        msg=f"查询成功，命中 {len(rows)} 条序列",
+        data={"total": len(rows), "series": rows[:50], "promql": promql},
+    )
+
+
 # ==================== CRUD Routes ====================
 
 
@@ -407,9 +520,31 @@ async def create_rule(
     current_user: User = Depends(require_permission("operate"))
 ):
     """Create a new rule"""
-    err = _schedule_error(request.schedule_type, request.schedule_value)
+    source_type = request.source_type or "logs"
+    err = _metric_error(source_type, request.metric, bool(request.stages), bool(request.nodes))
     if err:
         return Response(code=400, msg=err)
+
+    # 指标规则的调度由服务端强制（固定每 60 秒），不信客户端传上来的值。
+    schedule_type = request.schedule_type
+    schedule_value = request.schedule_value
+    forced = _force_metric_schedule(source_type)
+    if forced:
+        schedule_type = forced["schedule_type"]
+        schedule_value = forced["schedule_value"]
+
+    err = _schedule_error(schedule_type, schedule_value)
+    if err:
+        return Response(code=400, msg=err)
+
+    metric_json = "{}"
+    if source_type == "metric" and request.metric is not None:
+        metric_json = json.dumps({
+            "promql": request.metric.promql.strip(),
+            "operator": request.metric.operator,
+            "threshold": request.metric.threshold,
+            "duration_seconds": int(request.metric.sustain_minutes) * 60,
+        }, ensure_ascii=False)
 
     # 注入危险等级到 actions。severity_conditions 是**每个 action 自己**的字段，
     # 不是 RuleCreate 顶层的 —— 早先那个 hasattr(...) 永远为 False，死代码。
@@ -421,8 +556,10 @@ async def create_rule(
         stages=json.dumps([s.model_dump() for s in request.stages], ensure_ascii=False) if request.stages else "[]",
         output_mapping=json.dumps({k: v.model_dump() for k, v in request.output_mapping.items()}, ensure_ascii=False) if request.output_mapping else "{}",
         es_index=request.es_index,
-        schedule_type=request.schedule_type,
-        schedule_value=request.schedule_value,
+        source_type=source_type,
+        metric_config=metric_json,
+        schedule_type=schedule_type,
+        schedule_value=schedule_value,
         is_enabled=request.is_enabled,
         actions=json.dumps(actions, ensure_ascii=False) if actions else "[]",
         created_by=current_user.id
@@ -480,6 +617,15 @@ async def update_rule(
         update_data["schedule_value"] = request.schedule_value
     if request.is_enabled is not None:
         update_data["is_enabled"] = request.is_enabled
+    if request.source_type is not None:
+        update_data["source_type"] = request.source_type
+    if request.metric is not None:
+        update_data["metric_config"] = json.dumps({
+            "promql": request.metric.promql.strip(),
+            "operator": request.metric.operator,
+            "threshold": request.metric.threshold,
+            "duration_seconds": int(request.metric.sustain_minutes) * 60,
+        }, ensure_ascii=False)
 
     # 处理 JSON 字段 - 直接序列化为字符串
     if request.stages is not None:
@@ -511,19 +657,59 @@ async def update_rule(
             ensure_ascii=False
         )
     
-    # 校验「更新后的」调度参数，而不是只看本次提交了哪几个字段 ——
+    # 校验「更新后的」形状，而不是只看本次提交了哪几个字段 ——
     # 只改 schedule_value 的 PUT 里 schedule_type 是 None，拿 None 去校验会误判。
+    new_source = update_data.get("source_type", rule.source_type or "logs")
+    new_metric: Optional[MetricConfig] = request.metric
+    if new_metric is None:
+        # 没提交 metric 就沿用库里那份，合成成 MetricConfig 去校验
+        saved = _parse_metric_config(rule)
+        if saved:
+            try:
+                new_metric = MetricConfig(
+                    promql=saved.get("promql", ""),
+                    operator=saved.get("operator", ">"),
+                    threshold=float(saved.get("threshold", 0)),
+                    sustain_minutes=max(1, int(int(saved.get("duration_seconds", 300)) / 60)),
+                )
+            except Exception:
+                new_metric = None
+    # stages / nodes 同理：只提交了一部分字段时，看的是**合并后**的规则会不会带 ES 阶段
+    has_stages = bool(request.stages) if request.stages is not None else bool(json.loads(rule.stages or "[]"))
+    has_nodes = bool(request.nodes) if request.nodes is not None else bool(json.loads(rule.nodes or "[]"))
+    err = _metric_error(new_source, new_metric, has_stages, has_nodes)
+    if err:
+        return Response(code=400, msg=err)
+
+    # 指标规则的调度由服务端强制
+    forced = _force_metric_schedule(new_source)
+    if forced:
+        update_data["schedule_type"] = forced["schedule_type"]
+        update_data["schedule_value"] = forced["schedule_value"]
+
     new_type = update_data.get("schedule_type", rule.schedule_type)
     new_value = update_data.get("schedule_value", rule.schedule_value)
     err = _schedule_error(new_type, new_value)
     if err:
         return Response(code=400, msg=err)
 
+    # 条件变了 / 停用了 → 计时状态必须清掉。阈值从 80 改成 70 时，原来那条
+    # 「已持续 4 分钟」的计时器会让新条件一上来就触发 —— 那是拿旧证据判新标准。
+    old_metric_cfg = rule.metric_config or "{}"
+    cfg_changed = (
+        "metric_config" in update_data and update_data["metric_config"] != old_metric_cfg
+    ) or ("source_type" in update_data and update_data["source_type"] != (rule.source_type or "logs"))
+    disabled = update_data.get("is_enabled") is False
+
     for field, value in update_data.items():
         setattr(rule, field, value)
 
     db.commit()
     db.refresh(rule)
+
+    if (cfg_changed or disabled) and (rule.source_type or "") == "metric":
+        from app.services import metric_rule_engine
+        metric_rule_engine.clear_rule_states(db, rule.id)
 
     SchedulerService.mark_dirty()
     return Response(msg="规则更新成功", data=_rule_to_response(rule, db))
@@ -540,6 +726,12 @@ async def delete_rule(
     if not rule:
         return Response(code=404, msg="规则不存在")
 
+    # 先清指标计时状态再删规则 —— rule_metric_states.rule_id 有外键，
+    # MySQL InnoDB 下不先删子行会直接 1451。
+    if (rule.source_type or "") == "metric":
+        from app.services import metric_rule_engine
+        metric_rule_engine.clear_rule_states(db, rule.id)
+
     db.delete(rule)
     db.commit()
 
@@ -554,11 +746,26 @@ async def run_rule(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operate"))
 ):
-    """Run rule (preview ES results, no write)"""
+    """Run rule (preview results, no write)"""
     rule = db.query(Rule).filter(Rule.id == rule_id).first()
     if not rule:
         return Response(code=404, msg="规则不存在")
-    
+
+    # 指标规则：只读快照。**绝不推进计时** —— 点一下「测试」就把「持续 N 分钟」
+    # 往前推，会让人在正式跑之前莫名其妙提前触发。
+    if (rule.source_type or "logs") == "metric":
+        from app.services import metric_rule_engine
+        snap = metric_rule_engine.preview_metric_rule(db, rule)
+        if snap.get("no_data"):
+            return Response(
+                msg=f"无数据：{snap.get('error') or '查询未返回序列'}",
+                data={"total": 0, "preview": [], "no_data": True},
+            )
+        return Response(
+            msg=f"查询完成，共 {snap['total']} 条序列",
+            data={"total": snap["total"], "preview": snap["preview"], "no_data": False},
+        )
+
     try:
         es = _get_es(db)
         

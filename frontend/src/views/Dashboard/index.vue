@@ -135,7 +135,7 @@ let trendChart = null
 let resizeHandler = null
 
 const severityType = (s) => ({ critical: 'danger', high: 'warning', medium: 'info', low: 'success' }[s] || '')
-const statusType = (s) => ({ pending: 'warning', confirmed: 'primary', resolved: 'success', false_positive: 'info' }[s] || '')
+const statusType = (s) => ({ pending: 'warning', confirmed: 'primary', resolved: 'success', auto_resolved: 'success', false_positive: 'info' }[s] || '')
 
 // ECharts canvas 需要字面量色值，不能用 CSS 变量。运行时解析 Element Plus primary。
 const resolvePrimaryColor = () => {

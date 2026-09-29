@@ -33,7 +33,9 @@ export const rules = {
   esPreview: (data) => request.post('/rules/es-preview', data),
   esIndices: () => request.get('/rules/es-indices'),
   // TG 推送连通性测试（不落库，只用表单里当前填写的凭据发一条测试消息）
-  telegramTest: (data) => request.post('/rules/telegram-test', data)
+  telegramTest: (data) => request.post('/rules/telegram-test', data),
+  // PromQL 即时查询（只读：不落库、不推进指标规则的持续计时）
+  promqlTest: (data) => request.post('/rules/promql-test', data)
 }
 
 // ── 告警列表 ──

@@ -24,7 +24,14 @@ class Rule(Base, TimestampMixin):
     
     # ES index
     es_index = Column(String(256), default="security-logs-*")
-    
+
+    # 规则来源：logs = 查 ES 日志（默认，行为不变）；metric = 查 Grafana/Prometheus 指标
+    # 单独一列而不是塞进 JSON —— 调度分支和列表过滤都要按它路由。
+    source_type = Column(String(16), default="logs")
+    # 指标规则配置（JSON）：{"promql", "operator", "threshold", "duration_seconds"}
+    # 走 JSON-in-Text，与 nodes/stages/actions 同风格。
+    metric_config = Column(Text, default="{}")
+
     # Schedule: once / interval / cron
     schedule_type = Column(String(32), default="once")
     schedule_value = Column(String(128), default="")  # interval seconds or cron expression

@@ -9,6 +9,7 @@ from .base import Base, engine, SessionLocal, get_db
 from .user import User, LoginLog
 from .address import Address
 from .rule import Rule
+from .metric_rule_state import RuleMetricState
 from .alert import Alert
 from .config import SystemConfig
 from .execution_log import RuleExecutionLog
@@ -29,6 +30,7 @@ __all__ = [
     "User", "LoginLog",
     "Address",
     "Rule",
+    "RuleMetricState",
     "Alert",
     "SystemConfig",
     "RolePermission",

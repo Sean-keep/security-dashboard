@@ -77,6 +77,13 @@ def render_alert_template(template: str, result: dict, output_mapping: dict = No
         return ""
     import re as _re
 
+    # Grafana / Alertmanager 的 Go 模板语法：`{{$labels.route}}`、`{{ $labels.job }}`。
+    # 写 PromQL 规则时从 Grafana 把模板一起抄过来是很自然的事，原样留着标题里
+    # 就是一堆花括号。先归一化成平台的 `{labels.xxx}`，后面统一按 dict 取值。
+    # `$value` 同理映射到 `{value}`。
+    template = _re.sub(r"\{\{\s*\$?labels\.([A-Za-z0-9_]+)\s*\}\}", r"{labels.\1}", template)
+    template = _re.sub(r"\{\{\s*\$value\s*\}\}", "{value}", template)
+
     # Build reverse map: Chinese key → English key
     # Also support _output_mapping injected by reverse_output_mapping()
     _om = output_mapping or result.get("_output_mapping")
@@ -107,7 +114,15 @@ def render_alert_template(template: str, result: dict, output_mapping: dict = No
                 else:
                     val = match.group(0)
             else:
-                val = match.group(0)
+                # `{labels.route}` 这类：第一段不是阶段名，而是结果行里的 dict
+                # （指标行的 labels 就是这么带的）。以前这种情况一律原样留下
+                # 占位符，标题里就是一串 `{labels.route}`。只在「本来就要留字面量」
+                # 的地方生效，不影响任何已有的阶段路径。
+                holder = result.get(stage_name)
+                if isinstance(holder, dict) and field in holder:
+                    val = holder[field]
+                else:
+                    val = match.group(0)
         else:
             # Simple field: try original key first
             val = result.get(path)

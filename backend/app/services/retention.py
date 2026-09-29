@@ -57,10 +57,12 @@ def run_retention(db=None) -> dict:
             cutoff = local_now() - timedelta(days=days)
             try:
                 if model is Alert:
-                    # 告警只清「已结束」的；pending/confirmed 是在办案件，不碰
+                    # 告警只清「已结束」的；pending/confirmed 是在办案件，不碰。
+                    # auto_resolved 也算结束了 —— 漏了它就永远清不掉，自动恢复的
+                    # 告警会一直堆在表里。
                     n = (
                         db.query(Alert)
-                        .filter(Alert.created_at < cutoff, Alert.status.in_(("resolved", "false_positive")))
+                        .filter(Alert.created_at < cutoff, Alert.status.in_(("resolved", "auto_resolved", "false_positive")))
                         .delete(synchronize_session=False)
                     )
                 else:

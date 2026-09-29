@@ -54,7 +54,7 @@ def test_retention_prunes_old_ingest_and_execution_logs(db_session):
 
 def test_retention_never_touches_open_alerts(db_session):
     old = local_now() - timedelta(days=400)
-    for status in ("pending", "confirmed", "resolved", "false_positive"):
+    for status in ("pending", "confirmed", "resolved", "auto_resolved", "false_positive"):
         db_session.add(Alert(title=f"a-{status}", status=status, created_at=old, last_seen_at=old))
     db_session.commit()
 

@@ -23,6 +23,7 @@
             <el-option label="待处理" value="pending" />
             <el-option label="已确认" value="confirmed" />
             <el-option label="已解决" value="resolved" />
+            <el-option label="自动恢复" value="auto_resolved" />
             <el-option label="误报" value="false_positive" />
           </el-select>
         </el-form-item>
@@ -72,7 +73,7 @@
         </el-table-column>
         <el-table-column prop="status" label="状态" width="80" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            <el-tag :type="statusTag(row.status)" :effect="statusEffect(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="handle_suggestion" label="处理建议" min-width="180" show-overflow-tooltip>
@@ -109,7 +110,7 @@
           <el-tag :type="severityTag(detailData.severity)">{{ detailData.severity }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="处理状态">
-          <el-tag :type="statusTag(detailData.status)">{{ statusLabel(detailData.status) }}</el-tag>
+          <el-tag :type="statusTag(detailData.status)" :effect="statusEffect(detailData.status)">{{ statusLabel(detailData.status) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="来源IP">{{ detailData.src_ip || '-' }}</el-descriptions-item>
         <el-descriptions-item label="目的域名">{{ detailDomain }}</el-descriptions-item>
@@ -192,8 +193,11 @@ const timePreset = ref('today')
 const pagination = reactive({ page: 1, page_size: 20 })
 
 const severityTag = (s) => ({ critical: 'danger', high: 'warning', medium: 'info', low: 'success' }[s] || 'info')
-const statusTag = (s) => ({ pending: 'warning', confirmed: 'primary', resolved: 'success', false_positive: 'info' }[s] || 'info')
-const statusLabel = (s) => ({ pending: '待处理', confirmed: '已确认', resolved: '已解决', false_positive: '误报' }[s] || s)
+const statusTag = (s) => ({ pending: 'warning', confirmed: 'primary', resolved: 'success', auto_resolved: 'success', false_positive: 'info' }[s] || 'info')
+// 自动恢复用描边、其余用默认实底 —— 同为绿色也能一眼分出是系统关的还是人关的。
+// 返回 'light'（el-tag 默认值）不影响现有样式。
+const statusEffect = (s) => (s === 'auto_resolved' ? 'plain' : 'light')
+const statusLabel = (s) => ({ pending: '待处理', confirmed: '已确认', resolved: '已解决', auto_resolved: '自动恢复', false_positive: '误报' }[s] || s)
 
 // 解析ES原始日志JSON
 const parsedRawLogs = computed(() => {

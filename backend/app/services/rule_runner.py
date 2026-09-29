@@ -250,25 +250,39 @@ def run_rule(
     print(f"[RuleRunner] Executing rule: {result.rule_name} (ID: {rule_id}, by: {triggered_by})")
 
     try:
-        es = ESService(config=_get_es_config_from_db(db))
-
         stages: List[Any] = []
         output_mapping: Dict[str, Any] = {}
-        if rule.stages:
-            try:
-                stages = json.loads(rule.stages)
-                output_mapping = json.loads(rule.output_mapping) if rule.output_mapping else {}
-            except Exception:
-                stages = []
+        metric_outcome = None
 
-        if stages:
-            results = es.execute_multi_stage_rule(stages, output_mapping)
+        if (rule.source_type or "logs") == "metric":
+            # 指标规则：走 Grafana/Prometheus，**完全不碰 ES**（ES 可能根本没配）。
+            # 计时状态的推进、恢复通知都在 metric_rule_engine 里完成。
+            from app.services import metric_rule_engine
+
+            metric_outcome = metric_rule_engine.evaluate_metric_rule(db, rule)
+            # 恢复行绝不进 process_actions —— 那里只认「又命中了」，会开新告警，
+            # 于是回落后的低于阈值的值反而会开出一条新单。引擎已经分开放进
+            # `outcome.recoveries` 了，这里再滤一次是双保险。
+            results = [r for r in metric_outcome.rows if not r.get("recovery")]
         else:
-            nodes = json.loads(rule.nodes or "[]")
-            results = es.execute_query(rule.es_index, nodes)
+            es = ESService(config=_get_es_config_from_db(db))
 
-        # 反向映射 output_mapping 字段（中→英），确保 Action mapping 能匹配
-        results = reverse_output_mapping(output_mapping, results)
+            if rule.stages:
+                try:
+                    stages = json.loads(rule.stages)
+                    output_mapping = json.loads(rule.output_mapping) if rule.output_mapping else {}
+                except Exception:
+                    stages = []
+
+            if stages:
+                results = es.execute_multi_stage_rule(stages, output_mapping)
+            else:
+                nodes = json.loads(rule.nodes or "[]")
+                results = es.execute_query(rule.es_index, nodes)
+
+            # 反向映射 output_mapping 字段（中→英），确保 Action mapping 能匹配
+            results = reverse_output_mapping(output_mapping, results)
+
         result.total = len(results)
 
         actions = json.loads(rule.actions or "[]")
@@ -284,7 +298,9 @@ def run_rule(
         result.written = written or 0
         result.alert_count = executor.last_alert_count or 0
 
-        if executor.created_alert_ids and stages:
+        # 指标规则没有 ES 原始日志可挂；stages 为空时这里本来也会自动跳过，
+        # 这个条件只是把意图写明白。
+        if executor.created_alert_ids and stages and metric_outcome is None:
             store_raw_logs_for_alerts(db, es, stages, executor.created_alert_ids)
 
         rule.last_run = local_now()
@@ -295,18 +311,23 @@ def run_rule(
         if keep_preview:
             result.preview = list(results[:20])
 
+        detail: Dict[str, Any] = {
+            "trigger": triggered_by,
+            "total_results": result.total,
+            "mysql_written": executor.last_mysql_written,
+            "alert_created": result.alert_count,
+            "total_written": result.written,
+        }
+        if metric_outcome is not None:
+            # 无数据 / 恢复计数等指标规则特有的账，写进 detail 一起记。
+            detail.update(metric_outcome.to_detail())
+
         record_execution_log(
             db,
             rule_id=rule.id,
             rule_name=result.rule_name,
             alert_count=result.alert_count,
-            detail={
-                "trigger": triggered_by,
-                "total_results": result.total,
-                "mysql_written": executor.last_mysql_written,
-                "alert_created": result.alert_count,
-                "total_written": result.written,
-            },
+            detail=detail,
             status="success",
             duration_ms=result.duration_ms,
             triggered_by=triggered_by,

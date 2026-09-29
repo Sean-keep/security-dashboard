@@ -41,7 +41,7 @@
 SET SESSION group_concat_max_len = 1024000;
 SET NAMES utf8mb4;
 
--- 期望结构（当前模型快照，2026-09-24，18 表 / 183 列）
+-- 期望结构（当前模型快照，2026-09-29，19 表 / 204 列）
 DROP TABLE IF EXISTS _sc_expect;
 CREATE TABLE _sc_expect (
   tbl      VARCHAR(64) NOT NULL,
@@ -179,6 +179,16 @@ INSERT INTO _sc_expect (tbl, col, col_type, fam, notnull, is_pk) VALUES
   ('rule_execution_logs','error_message','TEXT','text',0,0),
   ('rule_execution_logs','duration_ms','INT','int',0,0),
   ('rule_execution_logs','triggered_by','VARCHAR(32)','str',0,0),
+  ('rule_metric_states','id','INT','int',1,1),
+  ('rule_metric_states','rule_id','INT','int',1,0),
+  ('rule_metric_states','series_key','VARCHAR(64)','str',1,0),
+  ('rule_metric_states','series_labels','TEXT','text',1,0),
+  ('rule_metric_states','breach_since','DATETIME','datetime',0,0),
+  ('rule_metric_states','firing','TINYINT(1)','bool',1,0),
+  ('rule_metric_states','last_value','DOUBLE','float',0,0),
+  ('rule_metric_states','last_check_at','DATETIME','datetime',0,0),
+  ('rule_metric_states','created_at','DATETIME','datetime',1,0),
+  ('rule_metric_states','updated_at','DATETIME','datetime',1,0),
   ('rules','id','INT','int',1,1),
   ('rules','name','VARCHAR(128)','str',1,0),
   ('rules','description','TEXT','text',0,0),
@@ -186,6 +196,8 @@ INSERT INTO _sc_expect (tbl, col, col_type, fam, notnull, is_pk) VALUES
   ('rules','stages','TEXT','text',0,0),
   ('rules','output_mapping','TEXT','text',0,0),
   ('rules','es_index','VARCHAR(256)','str',0,0),
+  ('rules','source_type','VARCHAR(16)','str',0,0),
+  ('rules','metric_config','TEXT','text',0,0),
   ('rules','schedule_type','VARCHAR(32)','str',0,0),
   ('rules','schedule_value','VARCHAR(128)','str',0,0),
   ('rules','is_enabled','TINYINT(1)','bool',0,0),

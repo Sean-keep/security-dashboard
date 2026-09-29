@@ -205,7 +205,7 @@ async def export_alerts(
         return (v or "").replace("\r\n", " ").replace("\n", " ")
 
     severity_cn = {"critical": "严重", "high": "高危", "medium": "中危", "low": "低危"}
-    status_cn = {"pending": "待处理", "confirmed": "已确认", "resolved": "已解决", "false_positive": "误报"}
+    status_cn = {"pending": "待处理", "confirmed": "已确认", "resolved": "已解决", "auto_resolved": "自动恢复", "false_positive": "误报"}
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -268,7 +268,7 @@ async def update_alert(
         alert.status = request.status
         if request.status == "confirmed":
             alert.confirmed_at = local_now()
-        elif request.status == "resolved":
+        elif request.status in ("resolved", "auto_resolved"):
             alert.resolved_at = local_now()
     
     if request.severity:

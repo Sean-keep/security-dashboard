@@ -23,7 +23,10 @@ class Alert(Base):
     event_count = Column(Integer, default=1)
     
     severity = Column(String(32), default="medium")  # low/medium/high/critical
-    status = Column(String(32), default="pending")  # pending/confirmed/resolved/false_positive
+    # pending/confirmed/resolved/auto_resolved/false_positive
+    # `auto_resolved` = 指标回落后系统自动关单（见 metric_rule_engine._emit_recovery），
+    # 与 `resolved`（人工处理完）分开，否则看不出来是谁关的。
+    status = Column(String(32), default="pending")
     category = Column(String(64), default="")
 
     # 手动填写的处理建议

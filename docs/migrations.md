@@ -34,6 +34,7 @@ backend/migrations/
 | `20260923_rbac_separation.sql` | 三权分立角色集；把 `users.role='admin'` 升级为 `sys_admin` | 2026-09-23 |
 | `20260924_role_permissions.sql` | `role_permissions` 表：角色 → 权限点矩阵，含默认五行 | 2026-09-24 |
 | `20260924_scheduler_observability.sql` | `rule_execution_logs` 新增 `duration_ms` / `triggered_by`；把 `scheduler_*` 挪到 `runtime` 分组（不进系统设置页） | 2026-09-24 |
+| `20260929_metric_rules.sql` | `rules` 新增 `source_type` / `metric_config`；`rule_metric_states` 持续状态表（指标阈值规则的计时器） | 2026-09-29 |
 | `mysql_init_dashboard.sql`（`docs/`） | 首次建库建表的基线 SQL | 历史 |
 
 ## 执行方式

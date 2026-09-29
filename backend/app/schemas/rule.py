@@ -61,26 +61,42 @@ class SeverityCondition(BaseModel):
     severity: str = Field(default="high", pattern="^(low|medium|high|critical)$")
 
 
+class MetricConfig(BaseModel):
+    """指标阈值规则配置（PromQL + 比较符 + 阈值 + 持续时长）
+
+    ``sustain_minutes`` 是用户填的口径，服务端转成 ``duration_seconds`` 存库。
+    """
+    promql: str = Field(..., min_length=1, max_length=4000)
+    operator: str = Field(default=">", pattern="^(>=|<=|==|>|<)$")
+    threshold: float
+    sustain_minutes: int = Field(default=5, ge=1, le=1440)
+
+
 class RuleCreate(BaseModel):
     """Create rule request"""
     name: str = Field(..., min_length=1, max_length=128)
     description: str = ""
-    
+
+    # logs = 查 ES 日志（默认）；metric = 查 Grafana/Prometheus 指标
+    source_type: str = Field(default="logs", pattern="^(logs|metric)$")
+    # 指标规则的配置，source_type=metric 时必填
+    metric: Optional[MetricConfig] = None
+
     # New format (multi-stage)
     stages: List[StageConfig] = Field(default_factory=list)
     output_mapping: Dict[str, OutputMapping] = Field(default_factory=dict)
-    
+
     # Legacy format (simple filters)
     nodes: List[FilterNode] = Field(default_factory=list)
-    
+
     # ES index (for legacy format)
     es_index: str = "security-logs-*"
-    
+
     # Schedule
     schedule_type: str = Field(default="once", pattern="^(once|interval|cron)$")
     schedule_value: str = ""
     is_enabled: bool = True
-    
+
     # Actions
     actions: List[Dict[str, Any]] = Field(default_factory=list)
 
@@ -92,6 +108,8 @@ class RuleUpdate(BaseModel):
     """Update rule request"""
     name: Optional[str] = None
     description: Optional[str] = None
+    source_type: Optional[str] = Field(default=None, pattern="^(logs|metric)$")
+    metric: Optional[MetricConfig] = None
     stages: Optional[List[StageConfig]] = None
     output_mapping: Optional[Dict[str, OutputMapping]] = None
     nodes: Optional[List[FilterNode]] = None
@@ -108,6 +126,8 @@ class RuleResponse(BaseModel):
     id: int
     name: str
     description: str
+    source_type: str = "logs"
+    metric: Optional[Dict[str, Any]] = None
     es_index: str
     schedule_type: str
     schedule_value: str

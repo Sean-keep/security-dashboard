@@ -151,7 +151,7 @@ def _seed_system_config() -> None:
                 ("retention_remote_executions_days", "30", "远程执行结果保留（天）",
                  "0 = 不清理", "retention"),
                 ("retention_alerts_resolved_days", "180", "已结束告警保留（天）",
-                 "只清 resolved / false_positive；pending/confirmed 不动。0 = 不清理", "retention"),
+                 "只清 resolved / auto_resolved / false_positive；pending/confirmed 不动。0 = 不清理", "retention"),
                 # ── 界面外观（UI 管理）。全站一套，不是个人偏好。──
                 ("ui_theme", "light", "主题模式", "light 或 dark", "ui"),
                 ("ui_primary_color", "#409eff", "主色", "Element Plus 主色（十六进制）", "ui"),

@@ -3,15 +3,27 @@
     <el-table-column prop="name" label="规则名称" min-width="160">
       <template #default="{ row }">
         <span class="rule-name">{{ row.name }}</span>
+        <el-tag v-if="isMetric(row)" size="small" type="warning" effect="plain" class="type-tag">指标</el-tag>
       </template>
     </el-table-column>
-    <el-table-column prop="es_index" label="ES索引" min-width="160" show-overflow-tooltip />
+    <el-table-column label="ES索引 / PromQL" min-width="180" show-overflow-tooltip>
+      <template #default="{ row }">
+        <span v-if="isMetric(row)" class="promql-code">{{ row.metric?.promql || '—' }}</span>
+        <span v-else>{{ row.es_index }}</span>
+      </template>
+    </el-table-column>
     <el-table-column prop="schedule_type" label="执行方式" width="100" align="center">
       <template #default="{ row }">
-        <el-tag size="small">{{ scheduleLabel(row.schedule_type) }}</el-tag>
+        <el-tag v-if="isMetric(row)" size="small" type="warning">指标·60s</el-tag>
+        <el-tag v-else size="small">{{ scheduleLabel(row.schedule_type) }}</el-tag>
       </template>
     </el-table-column>
-    <el-table-column prop="schedule_value" label="调度值" width="130" show-overflow-tooltip />
+    <el-table-column prop="schedule_value" label="调度值" width="130" show-overflow-tooltip>
+      <template #default="{ row }">
+        <span v-if="isMetric(row)">持续 {{ row.metric?.sustain_minutes ?? '—' }} 分钟</span>
+        <span v-else>{{ row.schedule_value }}</span>
+      </template>
+    </el-table-column>
     <el-table-column label="告警趋势" width="150" align="center">
       <template #default="{ row }">
         <el-tooltip placement="top" :show-after="100">
@@ -102,6 +114,7 @@ const emit = defineEmits(['edit', 'preview', 'execute', 'log', 'delete', 'toggle
 
 const scheduleLabel = (s) => ({ once: '手动', interval: '周期', cron: 'Cron' }[s] || s)
 const statusLabel = (s) => ({ success: '成功', error: '失败', missed: '漏跑' }[s] || s)
+const isMetric = (row) => row.source_type === 'metric'
 
 // 计算趋势图路径
 const getTrendPath = (trend) => {
@@ -130,6 +143,16 @@ const getTrendArea = (trend) => {
 
 <style lang="scss" scoped>
 .rule-name { font-weight: 600; color: var(--el-color-primary); }
+.type-tag { margin-left: 6px; }
+.promql-code {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-family: var(--el-font-family-mono, monospace);
+  font-size: 12px;
+  background: var(--code-inline-bg);
+  color: var(--code-inline-fg);
+}
 .run-cell { display:flex; align-items:center; gap:6px; }
 .muted { color: var(--el-text-color-secondary); }
 .pagination-wrap { display:flex; justify-content:flex-end; margin-top:16px; }
