@@ -766,6 +766,42 @@ def prometheus_metrics(
 # Grafana / Prometheus metrics
 # ---------------------------------------------------------------------------
 
+# 数据源发现的结果缓存。每次打开系统监控都要走 /api/datasources，而这一趟往返
+# 实测 810ms 起步（Grafana 在远端，地板价就是网络 RTT），uid 又几乎不变。
+# 原先 grafana_metrics 和 _compute_server_metrics 各查一次，一次页面加载白付
+# 两趟。缓存 5 分钟：数据源增删是极低频操作，改完最多等 5 分钟。
+_DISCO_CACHE: dict = {}
+_DISCO_TTL_SECONDS = 300
+
+
+def _discover_prometheus(db: Session):
+    """返回 ``(prom_url, prom_uid, err)``，结果缓存 :data:`_DISCO_TTL_SECONDS` 秒。"""
+    grafana_url = (_cfg_get(db, "grafana_url", "") or "").rstrip("/")
+    if not grafana_url:
+        return "", "", "grafana_url 未配置"
+
+    now = time.time()
+    hit = _DISCO_CACHE.get(grafana_url)
+    if hit and hit[0] > now:
+        return hit[1], hit[2], None
+
+    headers = _grafana_headers(db)
+    headers["Content-Type"] = "application/json"
+    ctx = _insecure_ssl_context()
+    try:
+        req = urllib.request.Request(f"{grafana_url}/api/datasources", headers=headers)
+        with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
+            for ds in json.loads(resp.read()):
+                if ds.get("type") == "prometheus":
+                    prom_url = ds.get("url", "").rstrip("/")
+                    prom_uid = str(ds.get("uid", ""))
+                    _DISCO_CACHE[grafana_url] = (now + _DISCO_TTL_SECONDS, prom_url, prom_uid)
+                    return prom_url, prom_uid, None
+    except Exception as exc:
+        return "", "", f"无法从 Grafana 获取 Prometheus 数据源（{exc}）"
+    return "", "", "无法从 Grafana 获取 Prometheus 数据源"
+
+
 def _compute_server_metrics(db: Session, end_ts: int, seconds: int):
     """CPU / memory / disk avg+peak per server over [end_ts - seconds, end_ts].
 
@@ -775,23 +811,12 @@ def _compute_server_metrics(db: Session, end_ts: int, seconds: int):
     grafana_url = _cfg_get(db, "grafana_url", "http://localhost:3000").rstrip("/")
     if not grafana_url:
         return [], "", "grafana_url 未配置"
+    prom_url, prom_uid, disco_err = _discover_prometheus(db)
+    if not prom_uid:
+        return [], prom_url, disco_err or "无法从 Grafana 获取 Prometheus 数据源"
     headers = _grafana_headers(db)
     headers["Content-Type"] = "application/json"
     ctx = _insecure_ssl_context()
-    prom_url = None
-    prom_uid = None
-    try:
-        req = urllib.request.Request(f"{grafana_url}/api/datasources", headers=headers)
-        with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
-            for ds in json.loads(resp.read()):
-                if ds.get("type") == "prometheus":
-                    prom_url = ds.get("url", "").rstrip("/")
-                    prom_uid = str(ds.get("uid", ""))
-                    break
-    except Exception:
-        pass
-    if not prom_url:
-        return [], "", "无法从 Grafana 获取 Prometheus 数据源"
 
     _step = 60 if seconds <= 7200 else (300 if seconds <= 86400 else 900)
     start = end_ts - seconds
@@ -819,7 +844,11 @@ def _compute_server_metrics(db: Session, end_ts: int, seconds: int):
         vals = [item["value"] for item in series]
         return round(sum(vals) / len(vals), 2), round(max(vals), 2)
 
-    cpu_expr = 'rate(node_cpu_seconds_total{mode!="idle"}[5m]) * 100'
+    # 必须 `avg by (instance)`：不聚合时 node_cpu_seconds_total 是**每核一条**，
+    # 实测 3 台机器跑出 448 条 series / 885KB（vs 聚合后 3 条 / 6.4KB），光解析
+    # 就多吃 940ms。而且下面按 instance 收集时会把上百个核的点全塞进同一个列表
+    # —— 图上每个 x 画一堆重叠点，avg/peak 算的也是「核×时间」而不是机器 CPU%。
+    cpu_expr = 'avg by (instance) (rate(node_cpu_seconds_total{mode!="idle"}[5m])) * 100'
     mem_expr = "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100"
     disk_root_expr = '(node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_free_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"} * 100'
     disk_logs_expr = '(node_filesystem_size_bytes{mountpoint="/data/logs"} - node_filesystem_free_bytes{mountpoint="/data/logs"}) / node_filesystem_size_bytes{mountpoint="/data/logs"} * 100'
@@ -881,9 +910,18 @@ def _compute_server_metrics(db: Session, end_ts: int, seconds: int):
     return servers, prom_url, None
 
 
+# /grafana-metrics 的响应缓存。Grafana 在远端，单趟往返地板价 ~810ms，
+# 一次页面加载要 4~5 趟，实测 3.4 秒。指标本身是分钟级粒度，30 秒内的
+# 重复查询拿到的是同一批数据，没必要再跑一遍 —— 切时间范围/回到本页都秒开。
+# 「刷新」按钮传 refresh=1 强制穿透，避免用户点刷新却看到旧数据。
+_METRICS_CACHE: dict = {}
+_METRICS_TTL_SECONDS = 30
+
+
 @router.get("/grafana-metrics", response_model=Response)
 def grafana_metrics(
     time_range: str = Query(default="1h", pattern="^(1h|6h|today|1d|7d)$"),
+    refresh: int = Query(default=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -892,29 +930,27 @@ def grafana_metrics(
     Pulls the Prometheus data source from Grafana, then uses
     ``/api/v1/query_range`` for history. ``time_range``: 1h | 6h | today | 1d | 7d.
     """
+    cached = _METRICS_CACHE.get(time_range)
+    if not refresh and cached and cached[0] > time.time():
+        return Response(data=cached[1])
+
+    def _finish(payload: dict) -> Response:
+        _METRICS_CACHE[time_range] = (time.time() + _METRICS_TTL_SECONDS, payload)
+        return Response(data=payload)
+
     grafana_url = _cfg_get(db, "grafana_url", "http://localhost:3000").rstrip("/")
     if not grafana_url:
-        return Response(data={"connected": False, "error": "grafana_url 未配置"})
+        return _finish({"connected": False, "error": "grafana_url 未配置"})
+
+    prom_url, prom_uid, disco_err = _discover_prometheus(db)
     headers = _grafana_headers(db)
     headers["Content-Type"] = "application/json"
     ctx = _insecure_ssl_context()
 
-    prom_url = None
-    prom_uid = None
-    try:
-        req = urllib.request.Request(f"{grafana_url}/api/datasources", headers=headers)
-        with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
-            for ds in json.loads(resp.read()):
-                if ds.get("type") == "prometheus":
-                    prom_url = ds.get("url", "").rstrip("/")
-                    prom_uid = str(ds.get("uid", ""))
-                    break
-    except Exception:
-        pass
-    if not prom_url:
-        return Response(data={
+    if not prom_uid:
+        return _finish({
             "connected": False,
-            "error": "无法从 Grafana 获取 Prometheus 数据源，请检查 Grafana 数据源配置",
+            "error": disco_err or "无法从 Grafana 获取 Prometheus 数据源，请检查 Grafana 数据源配置",
         })
 
     _range_map = {"1h": 3600, "6h": 21600, "today": 86400, "1d": 86400, "7d": 604800}
@@ -929,7 +965,7 @@ def grafana_metrics(
     now = int(time.time())
     servers, prom_url, _err = _compute_server_metrics(db, now, _seconds)
     if not servers:
-        return Response(data={
+        return _finish({
             "connected": _err is None,
             "source": "grafana",
             "prom_url": prom_url,
@@ -976,39 +1012,42 @@ def grafana_metrics(
     custom_results = []
     if custom_metrics:
         instant_map = {}
+        range_map = {}
+        # 一个池子同时发 instant 和 range。原来是两批串行 —— 等全部 instant
+        # 回来才发 range，自定义指标一多就得等两倍时间。反正都是发出去等结果，
+        # 合成一批墙钟时间取 max 而不是 sum。
+        jobs = []
         with ThreadPoolExecutor(max_workers=8) as pool:
-            instant_futs = {pool.submit(_query_instant, m.promql): m for m in custom_metrics}
-            for fut in as_completed(instant_futs):
-                m = instant_futs[fut]
+            for m in custom_metrics:
+                jobs.append((pool.submit(_query_instant, m.promql), "instant", m))
+                jobs.append((pool.submit(_query_range, m.promql), "range", m))
+            for fut, kind, m in jobs:
                 try:
-                    instant_map[m.id] = fut.result()
+                    res = fut.result()
                 except Exception:
-                    instant_map[m.id] = {}
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            range_futs = {pool.submit(_query_range, m.promql): m for m in custom_metrics}
-            for fut in as_completed(range_futs):
-                m = range_futs[fut]
-                try:
-                    inst_series_map = fut.result()
-                except Exception:
-                    inst_series_map = {}
-                series_data = []
-                for _inst, pts in inst_series_map.items():
-                    series_data.extend(pts)
-                seen_ts = set()
-                series_data_dedup = []
-                for p in sorted(series_data, key=lambda x: x["timestamp"]):
-                    if p["timestamp"] not in seen_ts:
-                        seen_ts.add(p["timestamp"])
-                        series_data_dedup.append(p)
-                custom_results.append({
-                    "id": m.id, "name": m.name, "description": m.description,
-                    "promql": m.promql, "unit": m.unit,
-                    "values": [{"instance": inst, "value": round(v, 4)} for inst, v in instant_map.get(m.id, {}).items()],
-                    "series_data": series_data_dedup,
-                })
+                    res = {}
+                (instant_map if kind == "instant" else range_map)[m.id] = res
 
-    return Response(data={
+        # 拼结果放到池子外面，并按 custom_metrics 的顺序走 —— 原先挂在
+        # as_completed 上，返回顺序看谁先回来，刷新两次列表顺序都不一样。
+        for m in custom_metrics:
+            series_data = []
+            for _inst, pts in range_map.get(m.id, {}).items():
+                series_data.extend(pts)
+            seen_ts = set()
+            series_data_dedup = []
+            for p in sorted(series_data, key=lambda x: x["timestamp"]):
+                if p["timestamp"] not in seen_ts:
+                    seen_ts.add(p["timestamp"])
+                    series_data_dedup.append(p)
+            custom_results.append({
+                "id": m.id, "name": m.name, "description": m.description,
+                "promql": m.promql, "unit": m.unit,
+                "values": [{"instance": inst, "value": round(v, 4)} for inst, v in instant_map.get(m.id, {}).items()],
+                "series_data": series_data_dedup,
+            })
+
+    return _finish({
         "connected": True,
         "source": "grafana",
         "prom_url": prom_url,

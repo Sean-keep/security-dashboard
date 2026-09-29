@@ -8,7 +8,7 @@
           <span class="card-title">系统监控</span>
           <span class="card-sub" v-if="metrics && metrics.time_range">{{ metrics.time_range }}</span>
           <div class="time-range-btns">
-            <el-select v-model="timePreset" size="small" style="width:145px" @change="loadMetrics">
+            <el-select v-model="timePreset" size="small" style="width:145px" @change="() => loadMetrics()">
               <el-option label="最近 1 小时" value="1h" />
               <el-option label="最近 6 小时" value="6h" />
               <el-option label="今日" value="today" />
@@ -16,7 +16,7 @@
               <el-option label="最近 7 天" value="7d" />
             </el-select>
           </div>
-          <el-button type="primary" :loading="loading" @click="loadMetrics" size="small">刷新</el-button>
+          <el-button type="primary" :loading="loading" @click="loadMetrics(true)" size="small">刷新</el-button>
         </div>
       </template>
 
@@ -199,10 +199,14 @@ const peakType = (v) => {
   return 'success'
 }
 
-const loadMetrics = async () => {
+// force=1 绕过 30s 响应缓存 —— 「刷新」按钮必须真刷新，否则用户点刷新看到的还是旧数。
+// 切时间范围各自是独立的 cache key，不必强制穿透。
+const loadMetrics = async (force = false) => {
   loading.value = true
   try {
-    const res = await inspectApi.grafanaMetrics({ time_range: timePreset.value })
+    const params = { time_range: timePreset.value }
+    if (force) params.refresh = 1
+    const res = await inspectApi.grafanaMetrics(params)
     metrics.value = res.data || null
     customMetrics.value = []
   } catch (e) {
@@ -272,15 +276,15 @@ const saveAlias = async (instance) => {
   try {
     await inspectApi.setServerAliases(current)
     ElMessage.success('别名已保存')
-    // 刷新数据
-    await loadMetrics()
+    // 刷新数据 —— 必须强制穿透缓存，否则刚存的别名还要等 30 秒才显示出来
+    await loadMetrics(true)
   } catch (e) {
     ElMessage.error('保存别名失败: ' + (e.message || '未知错误'))
     console.error('[saveAlias failed]', e)
   }
 }
 
-onMounted(loadMetrics)
+onMounted(() => loadMetrics())
 </script>
 
 <style scoped>
