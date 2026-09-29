@@ -102,7 +102,11 @@
 
       <el-table :data="tableData" stripe size="small" v-loading="loading" max-height="600"
         @row-click="showDetail" highlight-current-row style="cursor:pointer">
-        <el-table-column type="index" width="50" label="#" />
+        <el-table-column type="index" width="72" label="#" align="right">
+          <!-- 页内序号翻页就从 1 重新开始，看不出来自己在可翻看的 1000 条里走到哪了；
+               用 (page-1)*pageSize+$index 显示绝对位置。 -->
+          <template #default="{ $index }">{{ (page - 1) * pageSize + $index + 1 }}</template>
+        </el-table-column>
         <el-table-column v-if="isColVisible('timestamp')" prop="@timestamp" label="时间" width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ formatTime(row['@timestamp']) }}</template>
         </el-table-column>
@@ -134,8 +138,9 @@
       <el-empty v-if="!loading && !tableData.length" description="无匹配日志" :image-size="80" />
 
       <div class="pagination-wrap" v-if="total > 0">
-        <el-pagination v-model:current-page="page" :page-size="pageSize" :total="total"
-          layout="total, sizes, prev, pager, next" :page-sizes="[20, 50, 100, 200]"
+        <span v-if="windowNote" class="window-note">{{ windowNote }}</span>
+        <el-pagination v-model:current-page="page" :page-size="pageSize" :total="browseTotal"
+          layout="sizes, prev, pager, next" :page-sizes="[20, 50, 100, 200, 500, 1000]"
           @current-change="doQuery" @size-change="onPageSizeChange" />
       </div>
     </el-card>
@@ -223,9 +228,23 @@ const loading = ref(false)
 const tableData = ref([])
 const total = ref(0)
 const page = ref(1)
+// 每页 50 条，翻着看。服务端可能把末页夹小，查完按响应里的 page_size 回填。
 const pageSize = ref(50)
+// 「最多显示 1000 条」是**能翻到哪**的上限，不是命中数 —— 命中数照实报，
+// 分页器只按这个上限算页数，翻到底就翻不动了。
+const maxDisplay = ref(1000)
 // ES 返回的 took（服务端耗时）。拿不到就显示 null，不再用前端计时冒充。
 const took = ref(null)
+
+// 分页器的 total 用「可浏览数」而不是命中数：命中几十万时给它真实 total，
+// el-pagination 会算出上千页，而那些页后端根本取不到。
+const browseTotal = computed(() => Math.min(total.value, maxDisplay.value))
+
+// 命中数比可浏览上限多时得说明白 —— 否则用户会以为数据被截断/丢了。
+const windowNote = computed(() => {
+  if (total.value <= maxDisplay.value) return ''
+  return `命中数超过显示上限，最多翻看最近 ${maxDisplay.value.toLocaleString()} 条`
+})
 
 // 查询栏文本（Lucene）。查询栏是唯一真相源，始终以 dsl 提交。
 const queryText = ref('')
@@ -405,6 +424,9 @@ const doQuery = async () => {
     tableData.value = res.data?.records || []
     total.value = res.data?.total || 0
     took.value = res.data?.took ?? null
+    // 末页可能被服务端夹小，按实际值对齐，否则分页器按请求值算会跳错页
+    if (res.data?.page_size) pageSize.value = res.data.page_size
+    if (res.data?.max_display) maxDisplay.value = res.data.max_display
   } catch (e) {
     ElMessage.error('查询失败: ' + (e.message || e))
   } finally {
@@ -554,7 +576,14 @@ onMounted(async () => {
   margin-left: 10px; font-size: 12px; color: var(--el-text-color-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-.pagination-wrap { display: flex; justify-content: flex-end; margin-top: 16px; }
+.pagination-wrap {
+  display: flex; justify-content: flex-end; align-items: center;
+  gap: 16px; margin-top: 16px; flex-wrap: wrap;
+}
+.window-note {
+  margin-right: auto; font-size: 12px; color: var(--el-color-warning);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 
 .detail-kv { display: flex; padding: 6px 0; border-bottom: 1px solid var(--el-border-color-extra-light); }
 .detail-key { width: 160px; flex-shrink: 0; font-size: 12px; color: var(--el-text-color-secondary); font-family: monospace; white-space: nowrap; }

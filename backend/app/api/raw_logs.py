@@ -24,13 +24,51 @@ class QueryCondition(BaseModel):
     value: Optional[str] = None
 
 
+# 一次页面加载拉多少条。排查日志是翻着看的，50 条一页够用。
+DEFAULT_PAGE_SIZE = 50
+# 单页硬上限：一次最多显示 1000 条。再大响应体就以 MB 计了，浏览器渲染表格也跟不上。
+MAX_PAGE_SIZE = 1000
+# **最多显示**多少条 —— 与「命中数」是两码事：命中数照实报 ES 的总数（可能几十万），
+# 但只允许翻看最近这么多条。翻到底就提示用户缩小范围，而不是让他无限深翻 ——
+# 深翻既慢又没意义，真正要看的永远是最近的量。
+MAX_DISPLAY = 1000
+
+
 class RawLogQuery(BaseModel):
     conditions: Optional[List[QueryCondition]] = None
     logic: str = "AND"
     dsl: Optional[str] = None  # Lucene 语法查询
     time_range: str = "1h"
     page: int = 1
-    page_size: int = 50
+    page_size: int = DEFAULT_PAGE_SIZE
+
+
+def _clamp_window(page: int, page_size: int):
+    """把 ``(page, page_size)`` 夹进 :data:`MAX_DISPLAY`，返回 ``(size, from_)``。
+
+    窗口装不下就缩 ``size``（末页只剩半页的情况）；连起点都在窗口外就返回
+    ``(None, None)``，调用方报「请缩小范围」—— 这时候强行翻下去只是空页。
+    """
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(page_size)
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+    if page < 1:
+        page = 1
+    # 非法条数一律回落到默认值，不夹成 1 —— 传 0/-3 进来的多半是没填，
+    # 退回 50 比硬塞 1 条更接近调用方的本意。
+    if page_size < 1:
+        page_size = DEFAULT_PAGE_SIZE
+    page_size = min(page_size, MAX_PAGE_SIZE)
+
+    from_ = (page - 1) * page_size
+    if from_ >= MAX_DISPLAY:
+        return None, None
+    return min(page_size, MAX_DISPLAY - from_), from_
 
 
 def _get_es_config(db: Session) -> ESConfig:
@@ -115,6 +153,13 @@ async def query_raw_logs(
         config = _get_es_config(db)
         es = ESService(config=config)
 
+        size, from_ = _clamp_window(request.page, request.page_size)
+        if size is None:
+            return Response(
+                code=400,
+                msg=f"最多显示前 {MAX_DISPLAY} 条，请缩小时间范围或加筛选条件",
+            )
+
         # 时间过滤
         time_window = _build_time_range(request.time_range)
         if isinstance(time_window, dict) and "gte" in time_window:
@@ -126,8 +171,8 @@ async def query_raw_logs(
         if request.dsl:
             # Lucene 语法查询
             body = {
-                "size": request.page_size,
-                "from": (request.page - 1) * request.page_size,
+                "size": size,
+                "from": from_,
                 "query": {
                     "bool": {
                         "must": [
@@ -154,8 +199,8 @@ async def query_raw_logs(
                 must_clauses.append({"bool": {"should": should_clauses, "minimum_should_match": 1}})
 
             body = {
-                "size": request.page_size,
-                "from": (request.page - 1) * request.page_size,
+                "size": size,
+                "from": from_,
                 "query": {"bool": {"must": must_clauses}},
                 "sort": [{"@timestamp": {"order": "desc"}}],
                 "track_total_hits": True
@@ -170,10 +215,15 @@ async def query_raw_logs(
         records = [hit["_source"] for hit in hits.get("hits", [])]
 
         return Response(data={
+            # 命中数照实回 ES 的总数 —— 显示上限（MAX_DISPLAY）只管能翻到哪，
+            # 不改这个数，否则用户会以为命中就只有 1000 条。
             "total": total,
             "records": records,
-            "page": request.page,
-            "page_size": request.page_size,
+            "page": max(int(request.page or 1), 1),
+            # 回的是**实际**用的条数：末页可能被夹小，前端要按它对齐分页，
+            # 否则 el-pagination 还按请求值算，翻页就跳错位置。
+            "page_size": size,
+            "max_display": MAX_DISPLAY,
             # ES 自己的查询耗时（毫秒）。前端不再用 Date.now() 差值冒充服务端耗时。
             "took": result.get("took"),
         })
