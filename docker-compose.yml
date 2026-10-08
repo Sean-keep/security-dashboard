@@ -114,6 +114,12 @@ services:
       # Remote ingest
       INGEST_MAX_BODY_BYTES: ${INGEST_MAX_BODY_BYTES:-1048576}
       INGEST_RATE_LIMIT_PER_MINUTE: ${INGEST_RATE_LIMIT_PER_MINUTE:-120}
+      # Telegram 出站代理。api.telegram.org 在部分网络被 SNI 阻断，
+      # 配上代理才能发出去。留空 = 直连。也认标准的 HTTPS_PROXY / ALL_PROXY。
+      #   TELEGRAM_PROXY=socks5://host.docker.internal:1080
+      TELEGRAM_PROXY: ${TELEGRAM_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
       # Startup seeding
       SEED_SYSTEM_CONFIG: ${SEED_SYSTEM_CONFIG:-true}
     # Lets the backend reach host-side ES / Prometheus / Grafana.
