@@ -59,10 +59,241 @@ def test_send_telegram_never_leaks_token_in_error(monkeypatch):
         raise httpx.ConnectError("connect failed")
 
     monkeypatch.setattr(tn.httpx, "post", _boom)
+    monkeypatch.setattr(tn, "_probe_network", lambda *a, **kw: "")
     ok, err = tn.send_telegram("SUPER-SECRET-TOKEN", "1", "hi")
     assert ok is False
     assert "SUPER-SECRET-TOKEN" not in err
     assert "ConnectError" in err
+
+
+# ── 网络诊断 ──────────────────────────────────────────────
+# 之前只回「ConnectError」四个字母，运维分不清是 DNS 污染、TCP 被拒、
+# TLS 被 RST 还是 token 填错。这里盯住「报错必须指得出卡在哪一层」。
+
+def test_exception_chain_expands_empty_str_error():
+    """httpx 异常的 str() 常是空串，真正的信息在 __cause__ 里 —— 必须展开。"""
+    import httpx
+    from app.services.telegram_notify import _exception_chain
+
+    inner = ValueError("gaierror: Name or service not known")
+    outer = httpx.ConnectError("")          # str() == ""
+    outer.__cause__ = inner
+    text = _exception_chain(outer)
+    assert "ConnectError" in text
+    assert "Name or service not known" in text
+
+
+def test_exception_chain_keeps_class_name_when_no_message():
+    from app.services.telegram_notify import _exception_chain
+
+    text = _exception_chain(TimeoutError())
+    assert text == "TimeoutError"
+
+
+def test_exception_chain_walks_context_when_cause_is_none():
+    import httpx
+    from app.services.telegram_notify import _exception_chain
+
+    try:
+        try:
+            raise OSError("connection reset by peer")
+        except OSError:
+            raise httpx.TransportError("wrapped")
+    except Exception as exc:
+        text = _exception_chain(exc)
+    assert "connection reset by peer" in text
+    assert "TransportError" in text
+
+
+def test_exception_chain_stops_on_cycle():
+    """异常自己形成环时不能死循环。"""
+    from app.services.telegram_notify import _exception_chain
+
+    a = ValueError("a")
+    b = ValueError("b")
+    a.__cause__ = b
+    b.__cause__ = a
+    text = _exception_chain(a)
+    assert "a" in text and "b" in text
+
+
+def test_exception_chain_collapses_consecutive_duplicates():
+    """httpx 层层包装时同一句话会出现两遍，压掉连续重复。"""
+    from app.services.telegram_notify import _exception_chain
+
+    inner = OSError("[Errno 101] Network is unreachable")
+    mid = OSError("[Errno 101] Network is unreachable")
+    mid.__cause__ = inner
+    text = _exception_chain(mid)
+    assert text.count("[Errno 101]") == 1
+
+
+def test_transport_error_reports_layer_and_action(monkeypatch):
+    import httpx
+    from app.services import telegram_notify as tn
+
+    monkeypatch.setattr(
+        tn, "_probe_network",
+        lambda *a, **kw: "DNS 解析到 149.154.166.110；TCP 可连通；TLS 握手被对端重置",
+    )
+    monkeypatch.delenv("TELEGRAM_PROXY", raising=False)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("https_proxy", raising=False)
+    monkeypatch.delenv("ALL_PROXY", raising=False)
+    monkeypatch.delenv("all_proxy", raising=False)
+
+    err = tn._transport_error(httpx.ConnectError("reset"))
+    assert "ConnectError" in err
+    assert "诊断:" in err
+    assert "SNI" in err or "重置" in err
+    assert "建议:" in err
+    assert "TELEGRAM_PROXY" in err
+
+
+def test_transport_error_hints_at_existing_proxy(monkeypatch):
+    """已经配了代理还失败 —— 该说的是「检查代理」，不是「去配代理」。"""
+    import httpx
+    from app.services import telegram_notify as tn
+
+    monkeypatch.setattr(tn, "_probe_network", lambda *a, **kw: "")
+    monkeypatch.setenv("TELEGRAM_PROXY", "socks5://127.0.0.1:1080")
+
+    err = tn._transport_error(httpx.ConnectError("reset"))
+    assert "已配置出站代理" in err
+
+
+def test_transport_error_survives_probe_failure(monkeypatch):
+    """探测自身炸了也不能把原始报错弄丢。"""
+    import httpx
+    from app.services import telegram_notify as tn
+
+    def _boom(*a, **kw):
+        raise RuntimeError("probe itself broke")
+
+    monkeypatch.setattr(tn, "_probe_network", _boom)
+    err = tn._transport_error(httpx.ConnectError("reset"))
+    assert "ConnectError" in err
+    assert "建议:" in err
+
+
+def test_probe_network_reports_dns_failure():
+    """.invalid 是 RFC 2606 保留后缀，保证解析不出来。"""
+    from app.services.telegram_notify import _probe_network_uncached
+
+    text = _probe_network_uncached("no-such-host.invalid", 443)
+    assert "DNS" in text
+
+
+def test_probe_network_is_cached(monkeypatch):
+    """网络整体不通时规则连推 20 条，不能条条重探。"""
+    from app.services import telegram_notify as tn
+
+    calls = []
+
+    def _fake(host, port):
+        calls.append(host)
+        return "诊断结果"
+
+    monkeypatch.setattr(tn, "_probe_network_uncached", _fake)
+    tn._PROBE_CACHE.clear()
+    assert tn._probe_network("h", 1) == "诊断结果"
+    assert tn._probe_network("h", 1) == "诊断结果"
+    assert len(calls) == 1
+
+
+# ── 出站代理 ──────────────────────────────────────────────
+
+def test_proxy_url_prefers_telegram_proxy(monkeypatch):
+    from app.services.telegram_notify import _proxy_url
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://generic:1")
+    monkeypatch.setenv("TELEGRAM_PROXY", "socks5://tg:2")
+    assert _proxy_url() == "socks5://tg:2"
+
+
+def test_proxy_url_falls_back_to_standard_vars(monkeypatch):
+    from app.services.telegram_notify import _proxy_url
+
+    monkeypatch.delenv("TELEGRAM_PROXY", raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://generic:1")
+    assert _proxy_url() == "http://generic:1"
+
+
+def test_proxy_url_empty_without_any(monkeypatch):
+    from app.services.telegram_notify import _proxy_url
+
+    for k in ("TELEGRAM_PROXY", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(k, raising=False)
+    assert _proxy_url() == ""
+
+
+def test_send_passes_proxy_to_httpx(monkeypatch):
+    from app.services import telegram_notify as tn
+
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def _post(url, **kw):
+        seen.update(kw)
+        return _Resp()
+
+    monkeypatch.setattr(tn.httpx, "post", _post)
+    monkeypatch.setenv("TELEGRAM_PROXY", "socks5://127.0.0.1:1080")
+
+    ok, err = tn.send_telegram("tok", "1", "hi")
+    assert ok is True and err == ""
+    assert seen.get("proxy") == "socks5://127.0.0.1:1080"
+
+
+def test_send_omits_proxy_kwarg_when_unset(monkeypatch):
+    """没配代理就别传 proxy= —— 省得把 httpx 的 trust_env 语义盖掉。"""
+    from app.services import telegram_notify as tn
+
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def _post(url, **kw):
+        seen.update(kw)
+        return _Resp()
+
+    monkeypatch.setattr(tn.httpx, "post", _post)
+    for k in ("TELEGRAM_PROXY", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(k, raising=False)
+
+    ok, _ = tn.send_telegram("tok", "1", "hi")
+    assert ok is True
+    assert "proxy" not in seen
+
+
+def test_business_error_is_not_diagnosed_as_network(monkeypatch):
+    """Telegram 返回 400 是 token/chat_id 的问题，别贴一段网络诊断误导人。"""
+    from app.services import telegram_notify as tn
+
+    class _Resp:
+        status_code = 400
+
+        def json(self):
+            return {"ok": False, "description": "Unauthorized"}
+
+    monkeypatch.setattr(tn.httpx, "post", lambda *a, **kw: _Resp())
+    monkeypatch.setattr(
+        tn, "_probe_network", lambda *a, **kw: "（探测不该被调用）"
+    )
+
+    ok, err = tn.send_telegram("bad-token", "1", "hi")
+    assert ok is False
+    assert err == "Unauthorized"
+    assert "诊断" not in err
 
 
 # ── 出站脱敏 ──────────────────────────────────────────────

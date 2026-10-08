@@ -138,10 +138,82 @@
       </div>
     </el-card>
 
+    <!-- Python 环境：脚本执行与 pip 用的解释器。不是外部连接，但同样是
+         「服务端到点东西的路径」，跟在连接后面一起管。 -->
+    <el-card shadow="never" class="mb-16">
+      <template #header>
+        <div class="card-header">
+          <span class="card-title">Python 环境</span>
+          <div class="header-right">
+            <el-tag :type="pythonEffective?.ok ? 'success' : pythonEffective ? 'danger' : 'info'" size="small">
+              {{ pythonEffective ? (pythonEffective.ok ? '可用' : '不可用') : '未检测' }}
+            </el-tag>
+            <el-button v-if="!editingPython" type="primary" link size="small" :disabled="isPythonLocked" @click="startEditPython">编辑</el-button>
+            <template v-else>
+              <el-button type="default" size="small" @click="cancelEditPython">取消</el-button>
+              <el-button type="primary" size="small" :loading="pythonSaving" @click="savePython">保存</el-button>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <el-alert
+        v-if="isPythonLocked"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="mb-12"
+        title="由部署环境变量 SCRIPT_PYTHON_BIN 固定"
+        description="服务端启动时已钉死解释器，页面不可修改。如需变更请改部署配置并重启服务。"
+      />
+
+      <div v-if="!editingPython" class="conn-preview">
+        <div class="preview-row"><span class="preview-label">当前生效</span><span class="preview-val mono">{{ pythonEffective?.path || '未配置' }}</span></div>
+        <div class="preview-row"><span class="preview-label">版本</span><span class="preview-val">{{ pythonVersionLabel }}</span></div>
+        <div class="preview-row"><span class="preview-label">来源</span><span class="preview-val">{{ pythonSourceLabel }}</span></div>
+        <div v-if="pythonEffective && !pythonEffective.ok" class="preview-row"><span class="preview-label">状态</span><span class="test-msg fail">{{ pythonEffective.error }}</span></div>
+      </div>
+
+      <el-form v-else label-width="100px" size="default">
+        <el-form-item label="解释器">
+          <el-select
+            v-model="pythonBin"
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选择或直接输入绝对路径"
+            style="width:100%"
+          >
+            <el-option label="跟随应用解释器（推荐）" value="" />
+            <el-option
+              v-for="item in pythonItems"
+              :key="item.path"
+              :label="pythonOptionLabel(item)"
+              :value="item.path"
+              :disabled="!item.ok"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label=" ">
+          <span class="form-hint">留空 = 跟随应用解释器；手填必须是绝对路径。仅作用于 Python 脚本与 pip，Shell 脚本不受影响。</span>
+        </el-form-item>
+      </el-form>
+
+      <div v-if="editingPython" class="card-footer">
+        <el-button size="small" :loading="pythonTesting" @click="testPython">测试</el-button>
+        <span v-if="pythonTestResult" class="test-msg" :class="pythonTestResult.ok ? 'ok' : 'fail'">
+          {{ pythonTestResult.ok
+            ? `可用 (Python ${pythonTestResult.version}${pythonTestResult.is_venv ? ', venv' : ''}${pythonTestResult.has_pip ? '' : ', 无 pip'})`
+            : `不可用: ${pythonTestResult.error}` }}
+        </span>
+      </div>
+    </el-card>
+
   </div>
 </template>
 
 <script setup>
+import { computed, onMounted } from 'vue'
 import { useSystemSettings } from '../composables/useSystemSettings'
 
 const {
@@ -173,12 +245,62 @@ const {
   saveMysql,
   testMysql,
   saveGrafana,
-  testGrafana
+  testGrafana,
+  pythonBin,
+  pythonItems,
+  pythonEffective,
+  pythonSaving,
+  pythonTesting,
+  pythonTestResult,
+  editingPython,
+  loadPython,
+  startEditPython,
+  cancelEditPython,
+  testPython,
+  savePython
 } = useSystemSettings()
+
+// ── Python 环境 ──
+const isPythonLocked = computed(() => !!pythonEffective.value?.locked)
+
+const pythonSourceLabel = computed(() => {
+  const s = pythonEffective.value?.source
+  if (s === 'env') return '环境变量锁定'
+  if (s === 'db') return '页面配置'
+  return '应用解释器'
+})
+
+const pythonVersionLabel = computed(() => {
+  const e = pythonEffective.value
+  if (!e?.version) return '—'
+  const bits = [`Python ${e.version}`]
+  if (e.is_venv) bits.push('venv')
+  if (e.has_pip === false) bits.push('无 pip')
+  return bits.join(' · ')
+})
+
+const pythonOptionLabel = (item) => {
+  const bits = [item.path]
+  if (item.version) bits.push(`Python ${item.version}`)
+  if (item.is_venv) bits.push('venv')
+  if (!item.has_pip) bits.push('无 pip')
+  if (item.is_current) bits.push('当前')
+  return bits.join(' · ')
+}
+
+// 解释器列表走 inspectApi（manage_system），与 loadConfig 分开打
+onMounted(() => { loadPython() })
 </script>
 
 <style lang="scss" scoped>
 .mb-16 { margin-bottom: 16px; }
+.mb-12 { margin-bottom: 12px; }
+
+.form-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
 
 .card-header {
   display: flex;

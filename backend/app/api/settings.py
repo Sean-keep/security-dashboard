@@ -325,15 +325,38 @@ UI_CONFIG_DEFAULTS = {
     "ui_site_title": ("安全巡检平台", "站点标题", "侧边栏左上角显示的名称"),
 }
 
+# 脚本运行时配置。默认值留空 = 「随应用解释器」，跟 config.py 的
+# SCRIPT_PYTHON_BIN 默认一致 —— 新装好的库不该凭空钉死一个路径。
+SCRIPT_CONFIG_DEFAULTS = {
+    "script_python_bin": ("", "Python 解释器", "留空 = 随应用解释器；否则填绝对路径"),
+}
+
+# key → group_name
+_CONFIG_GROUPS = {**{k: "ui" for k in UI_CONFIG_DEFAULTS}, **{k: "script" for k in SCRIPT_CONFIG_DEFAULTS}}
+_ALL_CONFIG_DEFAULTS = {**UI_CONFIG_DEFAULTS, **SCRIPT_CONFIG_DEFAULTS}
+
 
 def _ensure_ui_config(db: Session) -> dict:
-    """补齐缺失的 ui_* 配置项，返回 key → SystemConfig 行。幂等。"""
-    existing = {r.key: r for r in db.query(SystemConfig).filter(SystemConfig.key.like("ui_%")).all()}
+    """补齐缺失的界面/脚本配置项，返回 key → SystemConfig 行。幂等。
+
+    界面和脚本的配置都归这里补：``save_config`` 对没有 SystemConfig 行的 key
+    硬拒，而 ``SEED_SYSTEM_CONFIG=0``（测试就是这么配的）时启动 seed 根本不跑，
+    光靠 ``_seed_system_config`` 会让保存直接 400。这正是 ui_* 当初要在这里
+    再兜一层的原因，脚本配置同理。
+    """
+    existing = {
+        r.key: r for r in db.query(SystemConfig)
+        .filter(SystemConfig.key.in_(list(_ALL_CONFIG_DEFAULTS)))
+        .all()
+    }
     added = False
-    for key, (val, label, desc) in UI_CONFIG_DEFAULTS.items():
+    for key, (val, label, desc) in _ALL_CONFIG_DEFAULTS.items():
         if key in existing:
             continue
-        row = SystemConfig(key=key, value=val, label=label, description=desc, group_name="ui")
+        row = SystemConfig(
+            key=key, value=val, label=label, description=desc,
+            group_name=_CONFIG_GROUPS[key],
+        )
         db.add(row)
         existing[key] = row
         added = True

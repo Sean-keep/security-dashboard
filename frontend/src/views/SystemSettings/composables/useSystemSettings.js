@@ -1,5 +1,5 @@
 import { ref, reactive } from 'vue'
-import { settings } from '@/api'
+import { settings, inspectApi } from '@/api'
 import { useUserStore } from '@/store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { roleLabel } from '@/config/roles'
@@ -241,6 +241,71 @@ const saveSecurity = async () => {
   finally { securitySaving.value = false }
 }
 
+// ── Python 环境 ──
+// 全局一个解释器。优先级：env SCRIPT_PYTHON_BIN（部署期硬钉，UI 只读）>
+// SystemConfig script_python_bin > 应用解释器。
+const pythonBin = ref('')
+const pythonItems = ref([])
+const pythonEffective = ref(null)   // {path, source, locked, version, ok, error}
+const pythonSaving = ref(false)
+const pythonTesting = ref(false)
+const pythonTestResult = ref(null)
+const editingPython = ref(false)
+
+const loadPython = async () => {
+  try {
+    const r = await inspectApi.listPythonInterpreters()
+    const data = r.data || {}
+    pythonEffective.value = data.effective || null
+    pythonItems.value = data.items || []
+    // 表单初值取「已配置的值」；留空表示跟随应用解释器
+    pythonBin.value = data.effective?.source === 'db' ? (data.effective?.path || '') : ''
+    editingPython.value = false
+  } catch (e) { /* 无权时静默；面板有提示 */ }
+}
+
+const startEditPython = () => {
+  pythonBin.value = pythonEffective.value?.source === 'db' ? (pythonEffective.value?.path || '') : ''
+  pythonTestResult.value = null
+  editingPython.value = true
+}
+
+const cancelEditPython = () => {
+  editingPython.value = false
+  pythonTestResult.value = null
+  pythonBin.value = pythonEffective.value?.source === 'db' ? (pythonEffective.value?.path || '') : ''
+}
+
+// 先测后存：路径填错就不该落库，否则下次跑脚本才炸。
+const testPython = async () => {
+  if (!pythonBin.value.trim()) { ElMessage.warning('请先选择或填写解释器路径'); return false }
+  pythonTesting.value = true; pythonTestResult.value = null
+  try {
+    const r = await inspectApi.testPythonInterpreter(pythonBin.value.trim())
+    pythonTestResult.value = r.data
+    return !!r.data?.ok
+  } catch (e) {
+    pythonTestResult.value = { ok: false, error: e?.message || '测试请求失败' }
+    return false
+  } finally { pythonTesting.value = false }
+}
+
+const savePython = async () => {
+  const path = pythonBin.value.trim()
+  if (path) {
+    const ok = await testPython()
+    if (!ok) { ElMessage.error('解释器不可用，未保存'); return }
+  }
+  pythonSaving.value = true
+  try {
+    await settings.saveConfig({ script_python_bin: path })
+    ElMessage.success(path ? 'Python 解释器已保存' : '已恢复为跟随应用解释器')
+    editingPython.value = false
+    await loadPython()
+  } catch (e) { ElMessage.error('保存失败') }
+  finally { pythonSaving.value = false }
+}
+
 // ── 日志中心 ──
 const logList = ref([]), logTotal = ref(0), logPage = ref(1), logTypeFilter = ref('')
 const loadLogs = async () => {
@@ -313,6 +378,19 @@ export function useSystemSettings() {
     securitySaving,
     securitySaved,
     saveSecurity,
+    // python interpreter
+    pythonBin,
+    pythonItems,
+    pythonEffective,
+    pythonSaving,
+    pythonTesting,
+    pythonTestResult,
+    editingPython,
+    loadPython,
+    startEditPython,
+    cancelEditPython,
+    testPython,
+    savePython,
     // logs
     logList,
     logTotal,
