@@ -19,12 +19,14 @@ container/VM and call it over the network — do not relax this module.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+import glob
 import hashlib
 import json
 import os
 import re
 import resource
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -171,16 +173,159 @@ def _require_script_execution_enabled() -> None:
         raise HTTPException(status_code=403, detail="脚本执行功能已由 ENABLE_SCRIPT_EXECUTION=0 关闭")
 
 
+def _resolve_python_bin(db: Optional[Session] = None) -> str:
+    """Interpreter for user scripts and for ``-m pip``.
+
+    Precedence — first hit wins:
+
+    1. ``SCRIPT_PYTHON_BIN`` env — deploy-time pin (Docker/compose). When set the
+       UI is read-only; a page must not silently override an ops pin.
+    2. ``script_python_bin`` in SystemConfig — what the settings page edits.
+    3. ``sys.executable`` — the app's own interpreter, so a script can import
+       whatever the app can.
+
+    A bare ``python3`` is only ever a last-resort fallback (frozen builds that
+    leave ``sys.executable`` empty). It resolves through the app process's PATH,
+    which is exactly the drift this function exists to avoid.
+    """
+    if settings.SCRIPT_PYTHON_BIN:
+        return settings.SCRIPT_PYTHON_BIN
+    if db is not None:
+        row = db.query(SystemConfig).filter(SystemConfig.key == "script_python_bin").first()
+        configured = (row.value or "").strip() if row else ""
+        if configured:
+            return configured
+    return sys.executable or "python3"
+
+
+def _python_source(db: Optional[Session] = None) -> str:
+    """Where the effective interpreter came from: ``env`` | ``db`` | ``default``."""
+    if settings.SCRIPT_PYTHON_BIN:
+        return "env"
+    if db is not None:
+        row = db.query(SystemConfig).filter(SystemConfig.key == "script_python_bin").first()
+        if row and (row.value or "").strip():
+            return "db"
+    return "default"
+
+
+def _python_bin(db: Optional[Session] = None) -> str:
+    """See :func:`_resolve_python_bin`. Kept as the short call-site name."""
+    return _resolve_python_bin(db)
+
+
+def _pip_cmd(*args: str, db: Optional[Session] = None) -> List[str]:
+    """``<python> -m pip ...`` — never a bare ``pip``.
+
+    Bare ``pip`` can belong to a different interpreter than the app's, so a
+    package installs somewhere the app cannot import from while the UI reports
+    success. Going through ``-m pip`` pins it to the resolved interpreter.
+    """
+    return [_resolve_python_bin(db), "-m", "pip", *args]
+
+
+# Probe prints one line starting with this so stray sitecustomize output cannot
+# poison the parse. The payload is JSON after the sentinel.
+_PROBE_SENTINEL = "SDPROBE "
+_PROBE_CODE = (
+    "import json,sys,importlib.util;"
+    "print(%r+json.dumps({"
+    "\"version\":\"%%d.%%d.%%d\"%%sys.version_info[:3],"
+    "\"is_venv\":sys.prefix!=sys.base_prefix,"
+    "\"executable\":sys.executable,"
+    "\"base_prefix\":sys.base_prefix,"
+    "\"has_pip\":importlib.util.find_spec(\"pip\")is not None"
+    "}))" % _PROBE_SENTINEL
+)
+
+
+def _probe_python(path: str) -> Dict[str, Any]:
+    """Ask a binary whether it is a usable Python. Never routes through _run_script.
+
+    ``_check_python_safety`` bans ``sys``/``importlib``, so a probe sent through
+    the normal script path would be rejected and every candidate would look
+    broken. Probe with raw subprocess instead, mirroring the ``-I -B`` argv shape
+    that real runs use so what we probe is what we execute.
+    """
+    out: Dict[str, Any] = {
+        "path": path, "ok": False, "version": "", "is_venv": False,
+        "has_pip": False, "realpath": "", "error": "",
+    }
+    if not isinstance(path, str) or not path.strip():
+        out["error"] = "路径为空"
+        return out
+    path = path.strip()
+    if "\x00" in path:
+        out["error"] = "路径包含非法字符"
+        return out
+    if not os.path.isabs(path):
+        # A relative name would be looked up on PATH at run time — the drift we
+        # are here to prevent. Only absolute paths are acceptable.
+        out["error"] = "必须是绝对路径（相对路径会按 PATH 解析，结果不可预期）"
+        return out
+    path = os.path.normpath(path)
+    if not os.path.isfile(path):
+        out["error"] = "文件不存在"
+        return out
+    if not os.access(path, os.X_OK):
+        out["error"] = "文件不可执行"
+        return out
+
+    out["realpath"] = os.path.realpath(path)
+    try:
+        result = subprocess.run(
+            [path, "-I", "-B", "-c", _PROBE_CODE],
+            capture_output=True,
+            timeout=3,
+            env=_scrubbed_env(),
+            preexec_fn=_limit_resources(settings.SCRIPT_MEMORY_LIMIT_MB, 3),
+            close_fds=True,
+        )
+    except subprocess.TimeoutExpired:
+        out["error"] = "探测超时（3 秒）"
+        return out
+    except Exception as exc:
+        out["error"] = f"无法执行: {exc}"
+        return out
+
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    payload = next(
+        (ln[len(_PROBE_SENTINEL):] for ln in stdout.splitlines() if ln.startswith(_PROBE_SENTINEL)),
+        "",
+    )
+    if not payload:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()[:200]
+        out["error"] = f"不是可用的 Python 解释器{('：' + detail) if detail else ''}"
+        return out
+    try:
+        info = json.loads(payload)
+    except Exception:
+        out["error"] = "探测输出无法解析"
+        return out
+
+    out.update(
+        ok=True,
+        version=str(info.get("version", "")),
+        is_venv=bool(info.get("is_venv")),
+        has_pip=bool(info.get("has_pip")),
+    )
+    return out
+
+
 def _run_script(
     code: str,
     lang: str,
     timeout: Optional[int] = None,
     env: Optional[Dict[str, str]] = None,
+    db: Optional[Session] = None,
 ) -> Dict[str, Any]:
     """Execute a script with a scrubbed env and resource limits.
 
     Returns ``{stdout, stderr, exit_code}``. See the module docstring for the
     threat model — this is not a sandbox.
+
+    ``db`` is optional so callers without a session (and the unit tests) keep
+    working; it only widens resolution to the SystemConfig layer.
     """
     err = _check_script_safety(code, lang=lang)
     if err:
@@ -191,14 +336,28 @@ def _run_script(
     preexec = _limit_resources(settings.SCRIPT_MEMORY_LIMIT_MB, timeout)
     started = time.monotonic()
 
+    cmd: List[str]
+    if lang == "python":
+        # -I: isolated (ignore PYTHON* env and user site). -B: no pyc.
+        # Deliberately not a bare "python3" — see _resolve_python_bin().
+        py_bin = _resolve_python_bin(db)
+        # A configured interpreter that does not work is a loud failure. Falling
+        # back to the app interpreter would be the same silent wrong-interpreter
+        # bug that unpinned "python3" caused — the admin must see this.
+        if os.path.isabs(py_bin) and not os.path.isfile(py_bin):
+            return {
+                "stdout": "",
+                "stderr": f"配置的脚本解释器不可用：{py_bin}（文件不存在）。"
+                          f"请在系统设置 → Python 环境中修正。",
+                "exit_code": 1,
+            }
+        cmd = [py_bin, "-I", "-B", "-c", code]
+    else:
+        cmd = ["bash", "-c", code]
+
     # Run from a throwaway cwd so scripts cannot casually read app source.
     with tempfile.TemporaryDirectory(prefix="sdrun-") as workdir:
         try:
-            if lang == "python":
-                # -I: isolated (ignore PYTHON* env and user site). -B: no pyc.
-                cmd = ["python3", "-I", "-B", "-c", code]
-            else:
-                cmd = ["bash", "-c", code]
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -539,7 +698,7 @@ def execute_scripts(
     results = []
     for s in scripts:
         started = local_now()
-        r = _run_script(s.content, s.script_type, env=req.extra_env or None)
+        r = _run_script(s.content, s.script_type, env=req.extra_env or None, db=db)
         _record_script_run(
             db, r,
             script_id=s.id, script_name=s.name, script_type=s.script_type,
@@ -567,7 +726,7 @@ def execute_block(
         env = dict(t.env or {})
         env.setdefault("TARGET_IP", t.ip)
         started = local_now()
-        r = _run_script(script.content, script.script_type, env=env)
+        r = _run_script(script.content, script.script_type, env=env, db=db)
         _record_script_run(
             db, r,
             script_id=script.id, script_name=f"{script.name}@{t.ip}",
@@ -586,7 +745,7 @@ def execute_adhoc(
 ):
     _require_script_execution_enabled()
     started = local_now()
-    result = _run_script(req.script, req.type)
+    result = _run_script(req.script, req.type, db=db)
     _record_script_run(
         db, result,
         script_id=None, script_name="(adhoc)", script_type=req.type,
@@ -1081,6 +1240,135 @@ def lookup_country(
 
 
 # ---------------------------------------------------------------------------
+# Python interpreter selection (admin only — picking a binary is RCE-adjacent)
+# ---------------------------------------------------------------------------
+
+class InterpreterTestReq(BaseModel):
+    path: str = Field(..., min_length=1, max_length=512)
+
+
+def _interpreter_candidates() -> List[str]:
+    """Paths worth probing. Deliberately does **not** resolve through PATH.
+
+    ``shutil.which`` would reintroduce the PATH drift the resolver exists to
+    avoid, so only absolute locations are listed. Neighbours of the running
+    interpreter are included because a venv's ``bin/`` usually holds the
+    versioned names alongside the one we execute.
+
+    Dedupe is by the **literal** normalized path only. Collapsing via realpath
+    here would be wrong: a venv's ``bin/python`` is a symlink to the system
+    interpreter, so the system one would vanish from the list even though it has
+    different site-packages. Post-probe dedupe separates them by ``is_venv``.
+    """
+    found: List[str] = []
+    seen = set()
+
+    def _add(p: Optional[str]) -> None:
+        if not p:
+            return
+        p = os.path.normpath(str(p))
+        name = os.path.basename(p)
+        # python3-config / python3.10-dbg are not interpreters.
+        if name.endswith("-config") or name.endswith("-dbg") or name.endswith("-dm"):
+            return
+        if p in seen:
+            return
+        seen.add(p)
+        found.append(p)
+
+    _add(sys.executable)
+    base = getattr(sys, "base_prefix", None) or sys.prefix
+    for pat in (f"{base}/bin/python*", "/usr/bin/python*", "/usr/local/bin/python*",
+                "/usr/bin/python", "/usr/local/bin/python"):
+        for hit in sorted(glob.glob(pat)):
+            _add(hit)
+    # Versioned siblings of the running interpreter (venv bin dir).
+    exe_dir = os.path.dirname(sys.executable) if sys.executable else ""
+    if exe_dir:
+        for hit in sorted(glob.glob(os.path.join(exe_dir, "python*"))):
+            _add(hit)
+    return found
+
+
+def _effective_interpreter(db: Session) -> Dict[str, Any]:
+    path = _resolve_python_bin(db)
+    probed = _probe_python(path) if os.path.isabs(path) else {"path": path, "ok": False, "error": "非绝对路径"}
+    return {
+        "path": path,
+        "source": _python_source(db),
+        # An ops pin must be visible as a lock, otherwise the admin edits the
+        # page and believes the change took effect while env overrides it.
+        "locked": bool(settings.SCRIPT_PYTHON_BIN),
+        "configured": path,
+        "ok": bool(probed.get("ok")),
+        "version": probed.get("version", ""),
+        "is_venv": bool(probed.get("is_venv")),
+        "has_pip": bool(probed.get("has_pip")),
+        "error": probed.get("error", ""),
+    }
+
+
+@router.get("/python-interpreters", response_model=Response[dict])
+def list_python_interpreters(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("manage_system")),
+):
+    """Discover and validate interpreters on the backend host.
+
+    Runs a real probe per candidate — a path that exists but is not Python
+    would otherwise look selectable and only fail later at run time.
+    """
+    effective = _effective_interpreter(db)
+    cur_key = None
+    if effective.get("ok"):
+        cur_key = (os.path.realpath(effective["path"]), True if effective.get("is_venv") else False)
+
+    items, seen = [], set()
+    for path in _interpreter_candidates():
+        info = _probe_python(path)
+        # A venv and its base share a realpath but differ in site-packages, so
+        # is_venv is part of the identity. Without it the system interpreter
+        # disappears behind the venv symlink target.
+        key = (info.get("realpath") or os.path.normpath(path), bool(info.get("is_venv")))
+        if key in seen:
+            continue
+        seen.add(key)
+        info["is_current"] = bool(cur_key) and key == cur_key
+        items.append(info)
+    return Response(data={"effective": effective, "items": items})
+
+
+@router.post("/python-interpreters/test", response_model=Response[dict])
+def test_python_interpreter(
+    req: InterpreterTestReq,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("manage_system")),
+):
+    """Validate a custom interpreter path before it is saved.
+
+    Gated by ENABLE_SCRIPT_EXECUTION because this executes an admin-supplied
+    binary. It must answer like Python (the probe payload) — that stops a bare
+    ``/bin/bash`` or ``/tmp/evil`` from being saved as the interpreter.
+    """
+    _require_script_execution_enabled()
+    return Response(data=_probe_python(req.path))
+
+
+@router.get("/python-interpreters/effective", response_model=Response[dict])
+def get_effective_interpreter(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("operate")),
+):
+    """Which interpreter scripts will actually use. Read-only, for the scripts page.
+
+    Gated at ``operate`` rather than ``manage_system`` because the scripts page
+    is used by operators (``execute_scripts`` needs ``operate``) and they need to
+    see what their code will run under. Discovery stays admin-only.
+    """
+    return Response(data=_effective_interpreter(db))
+
+
+# ---------------------------------------------------------------------------
 # Python dependency management (admin only — installs execute code)
 # ---------------------------------------------------------------------------
 
@@ -1094,11 +1382,14 @@ _PKG_RE = re.compile(r"^[a-zA-Z0-9._=\-\^~\[\]]+$")
 
 
 @router.get("/pip-packages", response_model=Response[List[dict]])
-def list_pip_packages(current_user: User = Depends(require_permission("manage_system"))):
+def list_pip_packages(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("manage_system")),
+):
     """List installed Python packages (``pip list``)."""
     try:
         result = subprocess.run(
-            ["pip", "list", "--format=json"],
+            _pip_cmd("list", "--format=json", db=db),
             capture_output=True, timeout=30,
             env=_scrubbed_env(), close_fds=True,
         )
@@ -1111,6 +1402,7 @@ def list_pip_packages(current_user: User = Depends(require_permission("manage_sy
 @router.post("/pip-install", response_model=Response)
 def pip_install(
     req: PipInstallReq,
+    db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manage_system")),
 ):
     """Install a Python package (admin only)."""
@@ -1123,7 +1415,7 @@ def pip_install(
         return Response(code=400, msg="包名格式不合规，仅允许字母、数字与 ._-+=^~[]")
     try:
         result = subprocess.run(
-            ["pip", "install", pkg, "--quiet", "--no-input", "--disable-pip-version-check"],
+            _pip_cmd("install", pkg, "--quiet", "--no-input", "--disable-pip-version-check", db=db),
             capture_output=True, timeout=120,
             env=_scrubbed_env(), close_fds=True,
         )
@@ -1142,6 +1434,7 @@ def pip_install(
 @router.post("/pip-uninstall", response_model=Response)
 def pip_uninstall(
     req: PipUninstallReq,
+    db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("manage_system")),
 ):
     """Uninstall a Python package (admin only)."""
@@ -1155,7 +1448,7 @@ def pip_uninstall(
         return Response(code=400, msg=f"禁止卸载核心依赖: {pkg}")
     try:
         result = subprocess.run(
-            ["pip", "uninstall", pkg, "-y", "--quiet"],
+            _pip_cmd("uninstall", pkg, "-y", "--quiet", db=db),
             capture_output=True, timeout=60,
             env=_scrubbed_env(), close_fds=True,
         )

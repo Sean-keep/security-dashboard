@@ -97,6 +97,11 @@ export const inspectApi = {
   grafanaMetrics: (params) => request.get('/inspect/grafana-metrics', { params }),
   // VirusTotal
   lookupCountry: (ips) => request.post('/inspect/lookup-country', ips),
+  // Python 解释器（选择器）。test 会真的跑一个二进制，放宽到 15s。
+  listPythonInterpreters: () => request.get('/inspect/python-interpreters', { timeout: 20000 }),
+  testPythonInterpreter: (path) => request.post('/inspect/python-interpreters/test', { path }, { timeout: 15000 }),
+  // 只读提示用；operate 可见，脚本页的管理员与操作员都要看
+  effectivePythonInterpreter: () => request.get('/inspect/python-interpreters/effective'),
   // Pip 包管理（服务端允许 120s，客户端给 180s 兜底）
   listPipPackages: () => request.get('/inspect/pip-packages'),
   installPip: (pkg) => request.post('/inspect/pip-install', { package: pkg }, { timeout: 180000 }),

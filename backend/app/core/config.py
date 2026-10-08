@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     ENABLE_SCRIPT_EXECUTION: bool = True
     SCRIPT_TIMEOUT_SECONDS: int = 30
     SCRIPT_MEMORY_LIMIT_MB: int = 512
+    # Interpreter for user scripts and for `python -m pip`. Empty = sys.executable,
+    # i.e. the same one running this app, so a script can import whatever the app
+    # can. Don't leave it as a bare "python3": that resolves through the app
+    # process's PATH and silently falls back to system packages when the service
+    # is started without the venv activated. Don't hardcode /usr/bin/python3
+    # either — the venv and the Docker image don't agree on that path.
+    SCRIPT_PYTHON_BIN: str = ""
 
     # Unauthenticated ingest (/api/remote/ingest/{name})
     INGEST_MAX_BODY_BYTES: int = 1_048_576  # 1 MiB

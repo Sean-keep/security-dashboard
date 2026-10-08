@@ -158,6 +158,10 @@ def _seed_system_config() -> None:
                 ("ui_density", "default", "表格密度", "default / small / large", "ui"),
                 ("ui_sidebar_collapse", "false", "侧边栏默认折叠", "true 或 false", "ui"),
                 ("ui_site_title", "安全巡检平台", "站点标题", "侧边栏左上角显示的名称", "ui"),
+                # ── 脚本运行时。留空 = 随应用解释器（sys.executable）。──
+                # 优先级：env SCRIPT_PYTHON_BIN（部署期硬钉）> 这里 > sys.executable。
+                ("script_python_bin", "", "Python 解释器",
+                 "留空 = 随应用解释器；否则填绝对路径。仅作用于 Python 脚本与 pip，Shell 脚本不受影响", "script"),
                 # /metrics 的可选令牌。留空 = 内网开放抓取；非空则要求 ?token=。
                 ("metrics_token", "", "Metrics 令牌",
                  "非空时 /metrics?token= 必须匹配；留空则开放抓取", "security"),

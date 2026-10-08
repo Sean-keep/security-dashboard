@@ -5,6 +5,16 @@
       <div class="action-left">
         <h2 class="page-title">脚本管理</h2>
         <span class="script-count">共 {{ scripts.length }} 个脚本</span>
+        <el-tooltip
+          v-if="pythonInfo"
+          content="仅 Python 脚本与 pip 走这个解释器；Shell 脚本不受影响。在系统设置 → 连接设置中修改。"
+          placement="bottom"
+        >
+          <span class="python-hint">
+            解释器 <span class="mono">{{ pythonInfo.path }}</span>
+            <el-tag size="small" type="info" class="ml-4">{{ pythonInfo.source === 'env' ? '环境锁定' : pythonInfo.source === 'db' ? '页面配置' : '应用解释器' }}</el-tag>
+          </span>
+        </el-tooltip>
       </div>
       <div class="action-right">
         <el-button type="primary" @click="openToolDialog">
@@ -62,6 +72,7 @@ import ScriptTable from './components/ScriptTable.vue'
 import ScriptEditorDialog from './components/ScriptEditorDialog.vue'
 import ToolDialog from './components/ToolDialog.vue'
 import { useScripts } from './composables/useScripts'
+import { inspectApi } from '@/api'
 
 
 const {
@@ -74,12 +85,21 @@ const {
 
 const editorRef = ref()
 const toolRef = ref()
+const pythonInfo = ref(null)
 
 const openCreate = () => editorRef.value.openCreate()
 const editScript = (row) => editorRef.value.editScript(row)
 const openToolDialog = () => toolRef.value.openToolDialog()
 
-onMounted(loadScripts)
+// 只读提示。operate 就能看 —— 他们跑脚本时得知道代码跑在哪个解释器上。
+const loadPythonInfo = async () => {
+  try {
+    const r = await inspectApi.effectivePythonInterpreter()
+    pythonInfo.value = r.data || null
+  } catch (e) { /* 无权或接口未就绪时静默 */ }
+}
+
+onMounted(() => { loadScripts(); loadPythonInfo() })
 </script>
 
 <style scoped>
@@ -112,6 +132,22 @@ onMounted(loadScripts)
 .script-count {
   font-size: 14px;
   color: var(--el-text-color-secondary);
+}
+
+.python-hint {
+  margin-left: 12px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  cursor: default;
+}
+
+.python-hint .mono {
+  font-family: var(--el-font-family-mono, monospace);
+  color: var(--el-text-color-primary);
+}
+
+.ml-4 {
+  margin-left: 4px;
 }
 
 .action-right {

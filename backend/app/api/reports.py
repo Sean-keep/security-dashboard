@@ -123,7 +123,7 @@ def inspection_report(
         rows = db.query(Script).filter(Script.id.in_(ids)).order_by(Script.id).all()
         for s in rows:
             try:
-                r = _run_script(s.content, s.script_type, timeout=20)
+                r = _run_script(s.content, s.script_type, timeout=20, db=db)
                 scripts_out.append({
                     "id": s.id,
                     "name": s.name,
